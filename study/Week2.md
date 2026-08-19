@@ -1,594 +1,354 @@
 # 2주차: 핵심 로직 구현과 v1 패턴 적용 (Implementation & LangChain v1)
 
-> **목표**: LangChain v1의 새로운 패턴인 `create_agent`를 활용하여 비즈니스 로직을 구현합니다.
+> **목표**: LangChain v1의 새로운 패턴인 `create_agent`와 Act Operator의 표준 모듈 체계를 활용하여 비즈니스 로직을 구현합니다.
 
 ---
 
 ## 📋 학습 체크리스트
 
-- [ ] Step 1: `developing-cast` 스킬 이해
-- [ ] Step 2: 구현 순서와 워크플로우 파악
-- [ ] Step 3: State 정의 (`state.py`)
+- [ ] Step 1: `developing-cast` 스킬의 역할 및 패턴 이해
+- [ ] Step 2: 모듈별 구현 순서와 워크플로우 파악
+- [ ] Step 3: State 스키마 정의 (`state.py`)
 - [ ] Step 4: 도구 구현 (`tools.py`)
-- [ ] Step 5: 모델 설정 (`models.py`)
-- [ ] Step 6: 프롬프트 작성 (`prompts.py`)
+- [ ] Step 5: 모델 팩토리 설정 (`models.py`)
+- [ ] Step 6: 프롬프트 템플릿 작성 (`prompts.py`)
 - [ ] Step 7: 에이전트 구성 (`agents.py`) — `create_agent` 패턴
-- [ ] Step 8: 노드 구현 (`nodes.py`)
-- [ ] Step 9: 그래프 조립 (`graph.py`)
-- [ ] Step 10: 실습 과제 — 검색 도구 + 답변 생성 노드
-- [ ] 마무리: 복습 퀴즈
+- [ ] Step 8: 노드 클래스 구현 (`nodes.py`) — `BaseNode` 상속
+- [ ] Step 9: 그래프 조립 및 컴파일 (`graph.py`) — `BaseGraph` 상속
+- [ ] Step 10: 실습 과제 — 검색 도구 + 답변 생성 노드 완성
+- [ ] 마무리: 복습 퀴즈 & 실전 트러블슈팅
 
 ---
 
 ## Step 1: `developing-cast` 스킬 이해
 
-### 1.1 스킬이란?
+### 1.1 스킬의 역할
 
-`developing-cast`는 CLAUDE.md에 정의된 아키텍처 명세를 **실제 코드로 변환**하는 AI 스킬입니다. 1주차에서 `architecting-act`로 설계한 결과물을 구현하는 단계입니다.
+`developing-cast`는 1주차에서 `architecting-act`로 도출한 `CLAUDE.md` 설계 명세를 **실제 동작하는 파이썬 코드**로 변환하는 핵심 구현 스킬입니다.
 
-### 1.2 스킬 사용법
+### 1.2 스킬 호출 방법
 
+```text
+💬 AI 프롬프트 예시:
+"@developing-cast를 사용하여 weekly_report Cast의 모듈들을 순차적으로 구현해줘."
 ```
-💬 AI에게 요청 예시:
 
-"@developing-cast를 사용하여 weekly_report Cast를 구현해 줘"
-```
+스킬 실행 시 AI가 수행하는 자동 프로세스:
+1. 루트 `/CLAUDE.md`에서 Act 전체 아키텍처 및 공통 규칙 확인
+2. 해당 Cast `/casts/{cast_snake}/CLAUDE.md`에서 상태 스키마, 노드 명세, 다이어그램 파악
+3. 엄격한 구현 순서(`state` → `tools/models/prompts` → `agents` → `nodes` → `conditions` → `graph`)에 따라 파일 작성
 
-스킬이 활성화되면 AI는 다음을 자동으로 수행합니다:
-1. `/CLAUDE.md` → Act 전체 개요 확인
-2. `/casts/{cast_name}/CLAUDE.md` → Cast 상세 명세 확인
-3. 명세 기반으로 코드 순차 생성
+### 1.3 내장 구현 패턴 카테고리 (50+ Patterns)
 
-### 1.3 스킬의 리소스 구조
-
-`developing-cast` 스킬에는 **50개 이상의 구현 패턴**이 리소스로 포함되어 있습니다:
-
-| 카테고리 | 리소스 파일 | 설명 |
-|:---:|:---:|---|
-| Core | `state.md`, `node.md`, `edge.md`, `graph.md` | 핵심 컴포넌트 패턴 |
-| Agents | `configuration.md`, `structured-output.md` | 에이전트 구성 패턴 |
-| Tools | `basic-tool.md`, `access-context.md` | 도구 정의 패턴 |
-| Models | `select-chat-models.md`, `standalone-model.md` | LLM 모델 설정 |
-| Memory | `add-to-agent.md`, `manage-conversations.md` | 메모리 관리 |
-| Middleware | `human-in-the-loop.md`, `summarization.md` 등 | 미들웨어 패턴 |
+| 카테고리 | 주요 패턴 | 활용 목적 |
+|:---:|---|---|
+| **Core** | `state.md`, `node.md`, `edge.md`, `graph.md` | 필수 컴포넌트 표준 스캐폴딩 |
+| **Agents** | `configuration.md`, `structured-output.md` | `create_agent` 기반 에이전트 루프 |
+| **Tools** | `basic-tool.md`, `access-context.md` | `@tool` 데코레이터 및 런타임 주입 |
+| **Models** | `select-chat-models.md`, `init-chat-model.md` | 모델 팩토리 및 공급자 추상화 |
+| **Memory** | `add-to-agent.md`, `checkpointer.md` | 단기/장기 지속성 상태 저장 |
+| **Middleware** | `human-in-the-loop.md`, `summarization.md`, `pii.md` | 라이프사이클 훅 및 안전장치 |
 
 ---
 
 ## Step 2: 구현 순서와 워크플로우
 
-### 2.1 정해진 구현 순서 (매우 중요!)
+### 2.1 정해진 구현 순서 (Strict Order)
 
-`developing-cast` 스킬은 반드시 아래 순서로 구현합니다:
+Act Operator 프로젝트는 순환 참조를 방지하고 타입 안정성을 확보하기 위해 **엄격한 하향식 순서**를 따릅니다:
 
+```text
+1. state.py           ← 🏗️ [기초] InputState / OutputState / State 정의
+   ↓
+2. 의존성 모듈들       ← 🔧 [부품] tools.py, models.py, prompts.py, agents.py, middlewares.py
+   ↓
+3. nodes.py           ← ⚙️ [로직] BaseNode를 상속받은 비즈니스 로직 노드
+   ↓
+4. conditions.py      ← 🔀 [분기] 조건부 엣지 라우팅 함수 (선택)
+   ↓
+5. graph.py           ← 🏭 [조립] StateGraph 빌드, 노드/엣지 연결 및 compile()
 ```
-1. state.py           ← 🏗️ 기초 (상태 스키마)
-   ↓
-2. 의존성 모듈들       ← 🔧 부품 (tools, models, prompts, agents, middlewares)
-   ↓
-3. nodes.py           ← ⚙️ 핵심 로직 (비즈니스 로직)
-   ↓
-4. conditions.py      ← 🔀 분기 (선택적)
-   ↓
-5. graph.py           ← 🏭 조립 (모든 것을 연결)
-```
 
-> [!IMPORTANT]
-> 이 순서를 지키는 이유: 각 모듈이 이전 모듈에 의존하기 때문입니다. `nodes.py`는 `state.py`의 스키마를 알아야 하고, `graph.py`는 모든 노드를 알아야 합니다.
-
-### 2.2 모듈 간 의존 관계
+### 2.2 모듈 간 참조 다이어그램
 
 ```mermaid
-graph LR
-    S[state.py] --> N[nodes.py]
-    T[tools.py] --> A[agents.py]
-    M[models.py] --> A
-    P[prompts.py] --> A
-    MW[middlewares.py] --> A
+flowchart LR
+    S["modules/state.py"] --> N["modules/nodes.py"]
+    T["modules/tools.py"] --> A["modules/agents.py"]
+    M["modules/models.py"] --> A
+    P["modules/prompts.py"] --> A
+    MW["modules/middlewares.py"] --> A
     A --> N
-    N --> G[graph.py]
+    N --> G["graph.py"]
     S --> G
-    CD[conditions.py] --> G
+    CD["modules/conditions.py"] --> G
 ```
 
 ---
 
 ## Step 3: State 정의 (`state.py`)
 
-State는 그래프의 **데이터 흐름을 정의하는 스키마**입니다. 모든 노드는 State를 읽고, State에 결과를 씁니다.
+State는 그래프 전체에서 노드 간 데이터를 교환하는 **단일 진실 공급원(SSOT)**입니다.
 
-### 3.1 기본 State 구조
+### 3.1 3-State 분리 패턴 (InputState, OutputState, State)
 
-```python
-# casts/{cast_name}/modules/state.py
-from typing_extensions import TypedDict
-
-class State(TypedDict):
-    input: str     # 입력 데이터
-    output: str    # 출력 데이터
-```
-
-### 3.2 세 가지 State 클래스
-
-Act Operator는 **InputState**, **OutputState**, **State** 세 가지를 분리하여 정의합니다:
+외부 인터페이스를 깔끔하게 유지하면서 내부에서 풍부한 상태를 다루기 위해 3개의 클래스로 분리합니다:
 
 ```python
 # casts/{cast_name}/modules/state.py
+from __future__ import annotations
+
+from typing import Annotated
+from langchain_core.messages import AnyMessage
 from langgraph.graph import MessagesState
+from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
 
 class InputState(TypedDict):
-    """그래프가 외부에서 받는 입력."""
+    """외부 사용자가 그래프에 전달하는 최초 입력."""
     query: str
 
 
 class OutputState(TypedDict):
-    """그래프가 외부로 내보내는 출력."""
+    """그래프 실행 완료 후 외부에 최종 반환되는 결과."""
     result: str
 
 
 class State(MessagesState):
-    """그래프 내부에서 사용하는 전체 상태.
-    MessagesState를 상속하면 messages 필드가 자동 포함됩니다.
+    """그래프 내부 노드들이 공유하는 전체 상태.
+    
+    MessagesState 상속 시 messages: Annotated[list[AnyMessage], add_messages] 자동 포함
     """
-    # messages 필드는 MessagesState에서 상속
-    # messages: Annotated[list[AnyMessage], add_messages]
     query: str
     result: str
+    search_results: list[str]
+    revision_count: int
 ```
 
-### 3.3 왜 세 가지로 나누는가?
+### 3.2 Reducer 작동 원리
 
-```
-외부 사용자     ──InputState──▶  [그래프 내부: State]  ──OutputState──▶  외부 사용자
-(query만 전달)                   (query + messages      (result만 반환)
-                                  + result + ...)
-```
-
-| 클래스 | 역할 | 포함 필드 |
-|:---:|:---:|---|
-| `InputState` | 외부에서 그래프로 전달되는 입력 | 최소한의 입력 필드만 |
-| `OutputState` | 그래프에서 외부로 반환되는 출력 | 최소한의 출력 필드만 |
-| `State` | 그래프 내부에서 노드 간 공유되는 전체 상태 | 모든 필드 (InputState + OutputState + 내부 전용) |
-
-### 3.4 Reducer — 상태 업데이트 방식
-
-Reducer는 노드가 상태를 업데이트할 때 **어떻게 병합할지** 결정합니다:
-
-```python
-from typing import Annotated
-from typing_extensions import TypedDict
-from operator import add
-
-class State(TypedDict):
-    count: int                              # Reducer 없음 → 덮어쓰기
-    items: Annotated[list[str], add]        # add → 리스트에 추가
-```
-
-| Reducer | 동작 | 예시 |
+| Reducer | 동작 방식 | 코드 예시 |
 |:---:|---|---|
-| 없음 (기본) | 새 값으로 **덮어쓰기** | `count: 1` → `count: 2` |
-| `operator.add` | 리스트에 **추가** | `["a"]` → `["a", "b"]` |
-| `add_messages` | 메시지를 **ID 기반 병합** | 동일 ID면 업데이트, 새 ID면 추가 |
-
-> [!TIP]
-> `MessagesState`를 상속하면 `messages` 필드에 `add_messages` reducer가 자동 적용됩니다. 메시지 기반 그래프에서 가장 흔한 패턴입니다.
+| **기본 (None)** | 이전 값을 새 값으로 **덮어쓰기(Overwrite)** | `result: str` |
+| **`operator.add`** | 리스트나 숫자를 **누적 추가(Append/Sum)** | `items: Annotated[list[str], operator.add]` |
+| **`add_messages`** | 메시지 ID 기반 **스마트 병합(Merge/Append)** | `messages: Annotated[list[AnyMessage], add_messages]` |
 
 ---
 
 ## Step 4: 도구 구현 (`tools.py`)
 
-도구(Tool)는 에이전트가 **외부 세계와 상호작용**하는 수단입니다. 웹 검색, DB 조회, API 호출 등을 도구로 정의합니다.
+도구(Tool)는 에이전트가 외부 검색 엔진, 데이터베이스, API와 상호작용하는 진입점입니다.
 
-### 4.1 기본 도구 만들기
-
-`@tool` 데코레이터로 간단하게 생성합니다:
+### 4.1 `@tool` 데코레이터를 이용한 도구 정의
 
 ```python
 # casts/{cast_name}/modules/tools.py
-from langchain.tools import tool
+from __future__ import annotations
+
+from langchain_core.tools import tool
 
 
 @tool
-def search_database(query: str, limit: int = 10) -> str:
-    """고객 데이터베이스에서 쿼리와 일치하는 레코드를 검색합니다.
+def web_search(query: str, max_results: int = 5) -> str:
+    """웹 검색 엔진을 통해 실시간 정보를 검색합니다.
 
     Args:
-        query: 검색할 키워드
-        limit: 반환할 최대 결과 수
+        query: 검색할 질문 또는 핵심 키워드
+        max_results: 반환할 최대 결과 수 (기본값 5)
     """
-    return f"'{query}'에 대해 {limit}개의 결과를 찾았습니다"
+    # 실습용 Mock 데이터 (Tavily 연동 전 테스트)
+    return f"'{query}'에 대해 검색된 {max_results}개의 최신 정보입니다."
 ```
 
-### 4.2 도구 정의 규칙
-
-| 규칙 | 설명 | 예시 |
-|:---:|---|---|
-| **타입 힌트 필수** | 파라미터의 타입을 반드시 명시 | `query: str` |
-| **Docstring 필수** | 함수의 설명이 도구 설명이 됨 | `"""검색합니다..."""` |
-| **Google 스타일** | Args 섹션으로 파라미터 설명 | `Args:\n    query: 키워드` |
-
-### 4.3 커스텀 이름 지정
-
-```python
-@tool("web_search")          # 도구 이름을 직접 지정
-def search(query: str) -> str:
-    """웹에서 정보를 검색합니다."""
-    return f"검색 결과: {query}"
-```
-
-### 4.4 Tavily 검색 도구 예시 (실습용)
-
-```python
-# casts/{cast_name}/modules/tools.py
-from langchain.tools import tool
-
-
-@tool
-def tavily_search(query: str) -> str:
-    """Tavily API를 사용하여 웹을 검색합니다.
-
-    Args:
-        query: 검색할 질문이나 키워드
-    """
-    # 실제 구현 시 TavilySearchResults 사용
-    # from langchain_community.tools.tavily_search import TavilySearchResults
-    # search = TavilySearchResults(max_results=3)
-    # return search.invoke(query)
-    return f"'{query}'에 대한 검색 결과입니다."
-```
-
-> [!NOTE]
-> Tavily API를 실제로 사용하려면 `uv add --package {cast_slug} langchain-community tavily-python` 명령으로 패키지를 설치하고, `.env` 파일에 `TAVILY_API_KEY`를 설정해야 합니다.
+> [!IMPORTANT]
+> - 모든 파라미터에 **타입 힌트**를 필수로 명시해야 합니다.
+> - LLM은 함수의 **Docstring**을 읽고 어떤 도구를 쓸지 판단하므로, 설명과 `Args`를 명확하게 기술해야 합니다.
 
 ---
 
-## Step 5: 모델 설정 (`models.py`)
+## Step 5: 모델 팩토리 설정 (`models.py`)
 
-LLM 모델의 설정을 한 곳에서 관리합니다.
-
-### 5.1 기본 모델 팩토리 함수
+모델 설정을 중앙 집중식 팩토리 함수로 관리하여 환경에 따라 모델을 유연하게 교체합니다.
 
 ```python
 # casts/{cast_name}/modules/models.py
+from __future__ import annotations
+
+import os
 from langchain_openai import ChatOpenAI
 
 
-def get_chat_model():
-    """OpenAI GPT-4o 모델을 반환합니다."""
+def get_chat_model(temperature: float = 0.1) -> ChatOpenAI:
+    """기본 OpenAI Chat 모델을 반환합니다."""
     return ChatOpenAI(
-        model="gpt-4o",
-        temperature=0.1,     # 낮을수록 일관된 응답
-        max_tokens=1000,     # 최대 출력 토큰 수
-        timeout=30           # 타임아웃 (초)
+        model=os.getenv("OPENAI_MODEL_NAME", "gpt-4o"),
+        temperature=temperature,
+        timeout=30,
     )
 ```
-
-### 5.2 범용 모델 초기화 (`init_chat_model`)
-
-프로바이더에 독립적인 방식:
-
-```python
-# casts/{cast_name}/modules/models.py
-from langchain.chat_models import init_chat_model
-
-
-def get_model():
-    """프로바이더를 지정하여 모델을 초기화합니다."""
-    return init_chat_model(
-        model="gpt-4o",
-        model_provider="openai",
-    )
-```
-
-### 5.3 지원 프로바이더
-
-| 프로바이더 | 패키지 | 설치 명령어 |
-|:---:|:---:|---|
-| OpenAI | `langchain-openai` | `uv add --package {cast} langchain-openai` |
-| Anthropic | `langchain-anthropic` | `uv add --package {cast} langchain-anthropic` |
-| Google | `langchain-google-genai` | `uv add --package {cast} langchain-google-genai` |
 
 ---
 
-## Step 6: 프롬프트 작성 (`prompts.py`)
-
-시스템 메시지, 사용자 메시지 등의 프롬프트 템플릿을 관리합니다.
-
-### 6.1 딕셔너리 형식 (간결)
+## Step 6: 프롬프트 관리 (`prompts.py`)
 
 ```python
 # casts/{cast_name}/modules/prompts.py
+from __future__ import annotations
 
-def get_system_prompt():
-    """시스템 프롬프트를 딕셔너리 형식으로 반환합니다."""
-    return [
-        {"role": "system", "content": "당신은 유능한 리서치 어시스턴트입니다."},
-    ]
+
+def get_system_prompt() -> str:
+    """리서치 에이전트 시스템 프롬프트 반환."""
+    return (
+        "당신은 신뢰할 수 있는 전문 리서치 어시스턴트입니다.\n"
+        "제공된 검색 도구를 활용하여 최신 정보를 수집하고 정확한 사실에 기반해 답변하세요."
+    )
 ```
-
-### 6.2 Message 객체 형식 (타입 안전)
-
-```python
-# casts/{cast_name}/modules/prompts.py
-from langchain.messages import SystemMessage, HumanMessage, AIMessage
-
-
-def get_system_prompt():
-    """시스템 프롬프트를 Message 객체로 반환합니다."""
-    return [
-        SystemMessage("당신은 유능한 리서치 어시스턴트입니다."),
-    ]
-```
-
-> [!TIP]
-> 두 형식 모두 동작합니다. 딕셔너리 형식이 간결하고, Message 객체 형식이 타입 안전합니다. 프로젝트에서 일관되게 하나를 선택하세요.
 
 ---
 
 ## Step 7: 에이전트 구성 (`agents.py`) — `create_agent` 패턴
 
-### 7.1 `create_agent` vs `create_react_agent` (v1 마이그레이션)
+### 7.1 LangChain v1 `create_agent` 마이그레이션
 
-LangChain v1에서는 `create_react_agent` 대신 **`create_agent`**를 사용합니다:
-
-```diff
-# ❌ 기존 방식 (deprecated)
-- from langchain.agents import create_react_agent
-
-# ✅ 새로운 방식 (LangChain v1)
-+ from langchain.agents import create_agent
-```
-
-### 7.2 `create_agent`의 구조
-
-```python
-from langchain.agents import create_agent
-
-agent = create_agent(
-    model=...,           # 필수: LLM 모델 인스턴스
-    tools=[...],         # 선택: 사용할 도구 목록
-    middleware=[...],    # 선택: 미들웨어 목록
-    system_prompt=...,   # 선택: 시스템 프롬프트
-    response_format=..., # 선택: 구조화된 출력 전략
-    state_schema=...,    # 선택: 커스텀 상태 스키마
-    context_schema=...,  # 선택: 런타임 컨텍스트 스키마
-)
-```
-
-### 7.3 실전 에이전트 구현
-
-모듈 분리 패턴을 따라 구현합니다:
+LangChain v1에서는 레거시 `create_react_agent` 대신 **`create_agent`**를 사용합니다:
 
 ```python
 # casts/{cast_name}/modules/agents.py
+from __future__ import annotations
+
 from langchain.agents import create_agent
 from .models import get_chat_model
-from .tools import tavily_search
+from .prompts import get_system_prompt
+from .tools import web_search
 
 
-def set_search_agent():
-    """검색 도구를 사용하는 에이전트를 생성합니다."""
+def create_search_agent():
+    """검색 도구와 시스템 프롬프트가 결합된 LangChain v1 에이전트 생성."""
     return create_agent(
         model=get_chat_model(),
-        tools=[tavily_search],
-        system_prompt="당신은 웹 검색을 통해 정보를 찾아주는 리서치 어시스턴트입니다."
+        tools=[web_search],
+        system_prompt=get_system_prompt(),
     )
 ```
 
-### 7.4 에이전트 실행 흐름 (ReAct 패턴)
-
-`create_agent`는 내부적으로 **ReAct 루프**를 실행합니다:
-
-```
-사용자 입력
-    ↓
-┌─────────────────────────────┐
-│  1. 모델이 상황 분석 (Reason) │
-│  2. 도구 호출 결정 (Act)      │
-│  3. 도구 실행 → 결과 관찰      │
-│  4. 충분하면 종료, 부족하면 반복 │
-└─────────────────────────────┘
-    ↓
-최종 응답
-```
+### 7.2 ReAct 에이전트 실행 루프
 
 ```mermaid
-graph TD
-    INPUT[사용자 입력] --> REASON[모델이 분석]
-    REASON --> DECIDE{도구 호출 필요?}
-    DECIDE -->|Yes| TOOL[도구 실행]
-    TOOL --> OBSERVE[결과 관찰]
+flowchart TD
+    INPUT([사용자 입력]) --> REASON["1. 모델 분석 (Reasoning)"]
+    REASON --> DECIDE{"도구 호출 필요?"}
+    DECIDE -->|Yes| ACT["2. 도구 실행 (Action)"]
+    ACT --> OBSERVE["3. 결과 확인 (Observation)"]
     OBSERVE --> REASON
-    DECIDE -->|No| OUTPUT[최종 응답]
+    DECIDE -->|No| OUTPUT([최종 응답 반환])
 ```
 
 ---
 
-## Step 8: 노드 구현 (`nodes.py`)
+## Step 8: 노드 구현 (`nodes.py`) — `BaseNode` 상속
 
-### 8.1 BaseNode 상속 패턴
-
-모든 노드는 `BaseNode`(동기) 또는 `AsyncBaseNode`(비동기)를 상속합니다:
+모든 노드는 `casts.base_node.BaseNode`를 상속하여 표준 인터페이스와 로깅 기능을 갖춥니다.
 
 ```python
 # casts/{cast_name}/modules/nodes.py
-from casts.base_node import BaseNode, AsyncBaseNode
-```
+from __future__ import annotations
 
-### 8.2 `execute()` 메서드 시그니처
-
-노드의 핵심은 `execute()` 메서드입니다. 필요에 따라 4가지 시그니처 중 선택합니다:
-
-```python
-# 시그니처 옵션 (필요한 것만 선택)
-def execute(self, state):                        # 상태만 필요
-def execute(self, state, config):                # + thread_id, tags
-def execute(self, state, runtime):               # + store, stream
-def execute(self, state, config, runtime):       # 모든 것 필요
-```
-
-### 8.3 간단한 노드 예시
-
-```python
-# casts/{cast_name}/modules/nodes.py
-from langchain_core.messages import AIMessage
+from typing import Any
+from langchain_core.messages import AIMessage, HumanMessage
 from casts.base_node import BaseNode
+from .agents import create_search_agent
 
 
-class GreetingNode(BaseNode):
-    """사용자에게 인사하는 간단한 노드."""
+class InputNode(BaseNode):
+    """사용자 입력을 메시지 형식으로 변환하는 노드."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self) -> None:
+        super().__init__(verbose=True)
 
-    def execute(self, state):
+    def execute(self, state: dict[str, Any]) -> dict[str, Any]:
         query = state.get("query", "")
+        self.log(f"Received user query: {query}")
         return {
-            "messages": [AIMessage(content=f"안녕하세요! '{query}'에 대해 알아보겠습니다.")],
-            "result": f"인사 완료: {query}"
+            "messages": [HumanMessage(content=query)]
+        }
+
+
+class SearchAgentNode(BaseNode):
+    """LangChain v1 ReAct 에이전트를 실행하는 노드."""
+
+    def __init__(self) -> None:
+        super().__init__(verbose=True)
+        self.agent = create_search_agent()
+
+    def execute(self, state: dict[str, Any]) -> dict[str, Any]:
+        self.log("Invoking search agent...")
+        response = self.agent.invoke({
+            "messages": state["messages"]
+        })
+        
+        last_message = response["messages"][-1]
+        return {
+            "messages": response["messages"],
+            "result": last_message.content,
         }
 ```
 
-### 8.4 에이전트를 사용하는 노드
-
-에이전트를 노드 안에서 호출하는 패턴입니다:
-
-```python
-# casts/{cast_name}/modules/nodes.py
-from casts.base_node import BaseNode
-from .agents import set_search_agent
-
-
-class SearchNode(BaseNode):
-    """검색 에이전트를 호출하는 노드."""
-
-    def __init__(self):
-        super().__init__()
-        self.agent = set_search_agent()    # 에이전트를 초기화 시 생성
-
-    def execute(self, state):
-        result = self.agent.invoke({
-            "messages": [{"role": "user", "content": state["query"]}]
-        })
-        return {"messages": result["messages"]}
-```
-
-### 8.5 verbose 모드 — 디버깅
-
-```python
-class DebugNode(BaseNode):
-    def __init__(self):
-        super().__init__(verbose=True)     # 디버그 로깅 활성화
-
-    def execute(self, state):
-        self.log("Processing", input=state.get("query"))   # verbose=True일 때만 출력
-        return {"result": "완료"}
-```
-
-### 8.6 노드의 핵심 규칙
-
-> [!IMPORTANT]
-> 1. `execute()`는 반드시 **dict를 반환**해야 합니다 (State 업데이트용)
-> 2. 반환된 dict의 키는 **State에 정의된 필드**와 일치해야 합니다
-> 3. 노드를 그래프에 등록할 때는 **인스턴스**를 전달합니다 (클래스가 아님!)
+> [!TIP]
+> - `execute()` 메서드는 반드시 State를 업데이트할 **dict**를 반환해야 합니다.
+> - `self.log(...)`는 `verbose=True`일 때 실행 흐름을 보기 쉽게 콘솔에 출력해 줍니다.
 
 ---
 
-## Step 9: 그래프 조립 (`graph.py`)
+## Step 9: 그래프 조립 (`graph.py`) — `BaseGraph` 상속
 
-### 9.1 BaseGraph 상속 패턴
+`BaseGraph`를 상속받아 `StateGraph`에 노드와 엣지를 연결하고 컴파일합니다.
 
 ```python
 # casts/{cast_name}/graph.py
+from __future__ import annotations
+
 from langgraph.graph import StateGraph, START, END
 from casts.base_graph import BaseGraph
 from casts.{cast_name}.modules.state import InputState, OutputState, State
-from casts.{cast_name}.modules.nodes import GreetingNode, SearchNode
-```
+from casts.{cast_name}.modules.nodes import InputNode, SearchAgentNode
 
-### 9.2 기본 그래프 구현
 
-```python
-class MyGraph(BaseGraph):
-    """Cast의 메인 그래프."""
+class SmartSearchGraph(BaseGraph):
+    """스마트 검색 Cast의 StateGraph 정의 클래스."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.input = InputState
         self.output = OutputState
         self.state = State
 
     def build(self):
-        """그래프를 빌드하고 컴파일합니다."""
-
-        # 1️⃣ StateGraph 생성 (스키마 지정)
+        """노드와 엣지를 조립하여 컴파일된 그래프를 반환합니다."""
         builder = StateGraph(
             self.state,
             input_schema=self.input,
             output_schema=self.output
         )
 
-        # 2️⃣ 노드 등록 (반드시 인스턴스!)
-        builder.add_node("greeting", GreetingNode())
-        builder.add_node("search", SearchNode())
+        # 1. 노드 등록 (반드시 클래스 인스턴스를 전달!)
+        builder.add_node("input_node", InputNode())
+        builder.add_node("search_node", SearchAgentNode())
 
-        # 3️⃣ 엣지 연결
-        builder.add_edge(START, "greeting")       # 시작 → 인사
-        builder.add_edge("greeting", "search")    # 인사 → 검색
-        builder.add_edge("search", END)           # 검색 → 종료
+        # 2. 엣지 연결
+        builder.add_edge(START, "input_node")
+        builder.add_edge("input_node", "search_node")
+        builder.add_edge("search_node", END)
 
-        # 4️⃣ 컴파일 및 반환
+        # 3. 컴파일 및 반환
         graph = builder.compile()
         graph.name = self.name
         return graph
 
 
-# 그래프 인스턴스 생성 (langgraph.json에서 참조)
-my_graph = MyGraph()
+# langgraph.json에서 참조할 인스턴스 생성
+smart_search_graph = SmartSearchGraph()
 ```
-
-### 9.3 그래프 빌드 4단계 요약
-
-| 단계 | 코드 | 설명 |
-|:---:|---|---|
-| 1 | `StateGraph(State, input_schema=..., output_schema=...)` | 상태 스키마로 그래프 생성 |
-| 2 | `builder.add_node("name", NodeClass())` | **인스턴스**로 노드 등록 |
-| 3 | `builder.add_edge(START, "first")` | 엣지로 노드 연결 |
-| 4 | `builder.compile()` | 실행 가능한 그래프로 컴파일 |
-
-### 9.4 조건부 엣지 (Conditional Edge)
-
-분기 로직이 필요할 때:
-
-```python
-# casts/{cast_name}/modules/conditions.py
-from langgraph.graph import END
-
-def should_continue(state) -> str:
-    """검색 결과 유무에 따라 분기합니다."""
-    if state.get("result"):
-        return "output"        # 결과 있으면 → output 노드
-    return END                 # 결과 없으면 → 종료
-```
-
-```python
-# graph.py의 build() 안에서
-builder.add_conditional_edges(
-    "search",                  # 출발 노드
-    should_continue,           # 분기 함수
-    {"output": "output_node", END: END}  # 반환값 → 노드 매핑
-)
-```
-
-### 9.5 흔한 실수 모음
-
-| ❌ 실수 | ✅ 올바른 방법 |
-|---|---|
-| `add_node("n", MyNode)` 클래스 전달 | `add_node("n", MyNode())` **인스턴스** 전달 |
-| `add_edge("START", "n")` 문자열 | `add_edge(START, "n")` **상수** 사용 |
-| `class MyGraph:` | `class MyGraph(BaseGraph):` **상속** 필수 |
-| `compile(interrupt_before=[...])` | `compile(checkpointer=..., interrupt_before=[...])` 체크포인터 필요 |
 
 ---
 
@@ -596,396 +356,72 @@ builder.add_conditional_edges(
 
 ### 10.1 과제 목표
 
-| 항목 | 내용 |
-|:---:|---|
-| **Cast 이름** | `smart_search` (또는 1주차에서 만든 Cast 재사용) |
-| **기능** | 사용자 질문 → 검색 도구 호출 → 답변 생성 |
-| **핵심 학습** | `state.py` → `tools.py` → `models.py` → `agents.py` → `nodes.py` → `graph.py` 순차 구현 |
+1. `smart_search` Cast에 `state.py` → `tools.py` → `models.py` → `agents.py` → `nodes.py` → `graph.py`를 구현합니다.
+2. `langgraph dev`를 실행하고 LangGraph Studio에서 질의를 전송하여 결과를 확인합니다.
 
-### 10.2 구현 파일 순서
-
-#### 📄 A. `state.py` — 상태 정의
-
-```python
-# casts/smart_search/modules/state.py
-from langgraph.graph import MessagesState
-from typing_extensions import TypedDict
-
-
-class InputState(TypedDict):
-    query: str
-
-
-class OutputState(TypedDict):
-    result: str
-
-
-class State(MessagesState):
-    query: str
-    result: str
-```
-
-#### 📄 B. `tools.py` — 검색 도구
-
-```python
-# casts/smart_search/modules/tools.py
-from langchain.tools import tool
-
-
-@tool
-def web_search(query: str) -> str:
-    """웹에서 정보를 검색합니다.
-
-    Args:
-        query: 검색할 질문이나 키워드
-    """
-    # 학습 단계에서는 Mock 데이터 반환
-    mock_results = {
-        "파이썬": "파이썬은 1991년에 만들어진 범용 프로그래밍 언어입니다.",
-        "LangChain": "LangChain은 LLM 기반 애플리케이션을 위한 프레임워크입니다.",
-    }
-    for key, value in mock_results.items():
-        if key.lower() in query.lower():
-            return value
-    return f"'{query}'에 대한 검색 결과: 관련 정보를 찾았습니다."
-```
-
-#### 📄 C. `models.py` — 모델 설정
-
-```python
-# casts/smart_search/modules/models.py
-from langchain_openai import ChatOpenAI
-
-
-def get_chat_model():
-    return ChatOpenAI(model="gpt-4o", temperature=0.1)
-```
-
-#### 📄 D. `agents.py` — 에이전트 구성
-
-```python
-# casts/smart_search/modules/agents.py
-from langchain.agents import create_agent
-from .models import get_chat_model
-from .tools import web_search
-
-
-def set_search_agent():
-    return create_agent(
-        model=get_chat_model(),
-        tools=[web_search],
-        system_prompt="당신은 웹 검색을 통해 정확한 정보를 제공하는 어시스턴트입니다."
-    )
-```
-
-#### 📄 E. `nodes.py` — 노드 구현
-
-```python
-# casts/smart_search/modules/nodes.py
-from langchain_core.messages import AIMessage
-from casts.base_node import BaseNode
-from .agents import set_search_agent
-
-
-class InputNode(BaseNode):
-    """사용자 입력을 처리하는 노드."""
-
-    def execute(self, state):
-        query = state.get("query", "")
-        self.log("Received query", query=query)
-        return {
-            "messages": [{"role": "user", "content": query}]
-        }
-
-
-class SearchAgentNode(BaseNode):
-    """검색 에이전트를 호출하는 노드."""
-
-    def __init__(self):
-        super().__init__(verbose=True)
-        self.agent = set_search_agent()
-
-    def execute(self, state):
-        result = self.agent.invoke({
-            "messages": state["messages"]
-        })
-        # 마지막 AI 메시지를 result에 저장
-        last_message = result["messages"][-1]
-        return {
-            "messages": result["messages"],
-            "result": last_message.content
-        }
-```
-
-#### 📄 F. `graph.py` — 그래프 조립
-
-```python
-# casts/smart_search/graph.py
-from langgraph.graph import StateGraph, START, END
-from casts.base_graph import BaseGraph
-from casts.smart_search.modules.state import InputState, OutputState, State
-from casts.smart_search.modules.nodes import InputNode, SearchAgentNode
-
-
-class SmartSearchGraph(BaseGraph):
-    def __init__(self):
-        super().__init__()
-        self.input = InputState
-        self.output = OutputState
-        self.state = State
-
-    def build(self):
-        builder = StateGraph(
-            self.state,
-            input_schema=self.input,
-            output_schema=self.output
-        )
-
-        builder.add_node("input", InputNode())
-        builder.add_node("search", SearchAgentNode())
-
-        builder.add_edge(START, "input")
-        builder.add_edge("input", "search")
-        builder.add_edge("search", END)
-
-        graph = builder.compile()
-        graph.name = self.name
-        return graph
-
-
-smart_search_graph = SmartSearchGraph()
-```
-
-### 10.3 실행 및 확인
+### 10.2 의존성 추가 및 환경 설정
 
 ```bash
-# 의존성 설치 (OpenAI 패키지)
+# 1. OpenAI 패키지 추가 (해당 Cast 패키지에 추가)
 uv add --package smart_search langchain-openai
 
-# 환경 변수 설정 (.env 파일)
-echo "OPENAI_API_KEY=your_key_here" > .env
+# 2. .env 파일 생성 (UTF-8 인코딩)
+# PowerShell 사용 시:
+Set-Content -Path .env -Value "OPENAI_API_KEY=your-api-key-here" -Encoding utf8
 
-# 개발 서버 실행
+# 3. LangGraph Studio 서버 실행
 uv run langgraph dev
 ```
-
-### 10.4 과제 제출 체크리스트
-
-- [ ] `state.py`에 InputState, OutputState, State를 정의했는가?
-- [ ] `tools.py`에 `@tool` 데코레이터로 검색 도구를 구현했는가?
-- [ ] `agents.py`에 `create_agent`로 에이전트를 구성했는가?
-- [ ] `nodes.py`에 BaseNode를 상속한 노드를 구현했는가?
-- [ ] `graph.py`에 노드를 **인스턴스**로 등록하고 엣지를 연결했는가?
-- [ ] 구현 순서(state → tools → models → agents → nodes → graph)를 지켰는가?
 
 ---
 
 ## 🧠 복습 퀴즈
 
-### Q1. 구현 순서
-
-다음 중 올바른 구현 순서는?
-
 <details>
-<summary>보기</summary>
+<summary><b>Q1. Act Operator에서 권장하는 모듈 구현 순서는?</b></summary>
 
-A. graph.py → nodes.py → state.py → tools.py  
-B. state.py → tools.py/models.py → agents.py → nodes.py → graph.py  
-C. nodes.py → state.py → graph.py → tools.py  
-D. agents.py → tools.py → state.py → nodes.py → graph.py
-
-<details>
-<summary>정답</summary>
-
-**B.** `state.py` → 의존성 모듈(`tools.py`, `models.py`) → `agents.py` → `nodes.py` → `graph.py`
-
-State가 기초이고, graph.py가 모든 것을 조립하는 최종 단계입니다.
-</details>
+`state.py` ➔ `tools.py / models.py / prompts.py` ➔ `agents.py` ➔ `nodes.py` ➔ `conditions.py` ➔ `graph.py`
 </details>
 
-### Q2. `create_agent` vs `create_react_agent`
-
-LangChain v1에서 `create_react_agent` 대신 사용해야 하는 함수와, 그 차이점을 설명하세요.
-
 <details>
-<summary>정답</summary>
+<summary><b>Q2. `builder.add_node("search", SearchNode)` 코드의 문제점은?</b></summary>
 
-**`create_agent`**를 사용합니다.
-
-`create_agent`는 `create_react_agent`의 후속으로, 모델/도구/미들웨어/시스템 프롬프트/구조화된 출력 등을 하나의 함수에서 통합 관리합니다. `middleware` 파라미터를 통해 안정성(재시도, 폴백)과 안전성(가드레일, 승인) 기능을 선언적으로 추가할 수 있습니다.
+노드를 등록할 때는 클래스 객체가 아니라 **인스턴스(`SearchNode()`)**를 넘겨주어야 합니다.
 </details>
 
-### Q3. 노드 규칙
-
-다음 코드에서 **2가지 오류**를 찾으세요:
-
-```python
-class MyGraph(BaseGraph):
-    def build(self):
-        builder = StateGraph(State)
-        builder.add_node("process", ProcessNode)      # 🤔 무엇이 문제?
-        builder.add_edge("START", "process")           # 🤔 무엇이 문제?
-        builder.add_edge("process", END)
-        graph = builder.compile()
-        return graph
-```
-
 <details>
-<summary>정답</summary>
+<summary><b>Q3. LangChain v1에서 `create_react_agent` 대신 권장하는 최신 함수는?</b></summary>
 
-1. `ProcessNode` → `ProcessNode()` (클래스가 아니라 **인스턴스**를 전달해야 합니다)
-2. `"START"` → `START` (문자열이 아니라 **import한 상수**를 사용해야 합니다)
+`create_agent` (통합 미들웨어, 모델 설정, 구조화된 출력 지원)
 </details>
 
-### Q4. State 분리
-
-InputState, OutputState, State를 분리하는 이유를 한 문장으로 설명하세요.
-
 <details>
-<summary>정답</summary>
+<summary><b>Q4. `InputState`와 `OutputState`를 `State`와 별도로 분리하는 이유는?</b></summary>
 
-외부에 노출되는 **입출력 인터페이스를 최소화**하면서, 그래프 내부에서는 중간 데이터를 포함한 **풍부한 상태**를 자유롭게 사용하기 위해서입니다.
+외부 사용자와의 입출력 인터페이스는 간결하게 유지하면서, 그래프 내부에서는 중간 연산 및 대화 기록(`messages`)을 자유롭게 누적/처리하기 위함입니다.
 </details>
+
+---
+
+## 🛠️ 실전 트러블슈팅 가이드
+
+| 증상 | 원인 | 해결 방법 |
+|---|---|---|
+| `UnicodeDecodeError: 'utf-8' codec can't decode...` | Windows PowerShell에서 `echo`로 `.env` 파일 생성 시 UTF-16으로 저장됨 | `Set-Content -Path .env -Value "..." -Encoding utf8` 사용 |
+| `TypeError: execute() missing 1 required positional argument` | `BaseNode`의 `execute()` 시그니처 불일치 | `def execute(self, state: dict[str, Any]) -> dict[str, Any]` 형식 확인 |
+| `GraphBuilderError: Node not found in graph` | `add_edge()`에서 등록되지 않은 노드 이름 사용 | `add_node("name", ...)`와 `add_edge("name", ...)`의 이름 일치 여부 확인 |
 
 ---
 
 ## 📚 참고 자료
 
-- [developing-cast 스킬](../.claude/skills/developing-cast/SKILL.md) — 구현 워크플로우 및 50+ 패턴
-- [LangChain Agents 문서](https://docs.langchain.com/oss/python/langchain/agents) — `create_agent` 공식 문서
-- [LangChain Tools 문서](https://docs.langchain.com/oss/python/langchain/tools) — `@tool` 데코레이터
-- [LangGraph Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api) — StateGraph, 노드, 엣지
+- [LangChain v1 Agents 공식 문서](https://docs.langchain.com/oss/python/langchain/agents)
+- [LangGraph StateGraph API 레퍼런스](https://langchain-ai.github.io/langgraph/reference/graphs/)
+- [developing-cast 스킬 가이드](../.claude/skills/developing-cast/SKILL.md)
+- [AGENTS.md 표준 가이드](../AGENTS.md)
 
 ---
 
-## 🧪 실습 테스트: `weekly_report` Cast 구현
+## ⏭️ 다음 주차 예고
 
-### 테스트 개요
-
-1주차에서 `architecting-act` 스킬로 설계한 `weekly_report` Cast를 `developing-cast` 스킬 워크플로우에 따라 실제 구현하고 LangGraph Studio에서 테스트했습니다.
-
-### 구현한 파일 (구현 순서대로)
-
-| 순서 | 파일 | 역할 |
-|:---:|---|---|
-| 1 | `modules/state.py` | `InputState`(raw_tasks, report_period), `OutputState`(final_report, summary), 내부 `State` 11필드 |
-| 2 | `modules/prompts.py` | 업무 분류 / 보고서 생성 / 수정 반영 / 요약 프롬프트 (한국어) |
-| 3 | `modules/models.py` | `ClassifiedTasks` Pydantic 스키마 + `gpt-4o-mini` 모델 팩토리 3개 |
-| 4 | `modules/nodes.py` | `CollectInput`, `ClassifyTasks`, `GenerateReport`, `HumanReview`, `FormatOutput` 5개 노드 |
-| 5 | `modules/conditions.py` | `route_after_review()` — 승인/수정/자동승인(3회 초과) 라우팅 |
-| 6 | `graph.py` | StateGraph 조립 + `MemorySaver` 체크포인터 |
-
-### 아키텍처 패턴: Cyclic + Human-in-the-Loop
-
-```mermaid
-graph TD
-    START([START]) --> CollectInput[CollectInput]
-    CollectInput --> ClassifyTasks[ClassifyTasks]
-    ClassifyTasks --> GenerateReport[GenerateReport]
-    GenerateReport --> HumanReview["HumanReview (interrupt)"]
-    HumanReview -->|approved| FormatOutput[FormatOutput]
-    HumanReview -->|revision| GenerateReport
-    FormatOutput --> END([END])
-```
-
-### 핵심 구현 포인트
-
-#### 1. Structured Output (업무 분류)
-
-`ClassifyTasks` 노드에서 `with_structured_output()`을 사용하여 LLM이 정확한 JSON 구조로 응답하도록 강제:
-
-```python
-# models.py
-class ClassifiedTasks(BaseModel):
-    completed: list[str]      # 완료 업무
-    in_progress: list[str]    # 진행 중 업무
-    next_week: list[str]      # 다음 주 계획
-
-def get_classification_model():
-    model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    return model.with_structured_output(ClassifiedTasks)
-```
-
-#### 2. Human-in-the-Loop (`interrupt()` 함수)
-
-`HumanReview` 노드 내부에서 `langgraph.types.interrupt()`를 호출하여 사용자 입력을 받음:
-
-```python
-# nodes.py
-from langgraph.types import interrupt
-
-class HumanReview(BaseNode):
-    def execute(self, state):
-        # Studio UI에 보고서 초안을 보여주고 사용자 입력 대기
-        user_response = interrupt({
-            "draft_report": state["draft_report"],
-            "message": "승인하려면 'approve', 수정하려면 피드백을 입력하세요."
-        })
-
-        if user_response in ("approve", "승인"):
-            return {"is_approved": True}
-        else:
-            return {"is_approved": False, "review_feedback": user_response,
-                    "revision_count": state["revision_count"] + 1}
-```
-
-> [!IMPORTANT]
-> `interrupt_before` vs `interrupt()` 차이:
-> - `interrupt_before=["node"]` → 그래프 컴파일 시 설정, Studio에서 State를 직접 수정해야 해서 불편
-> - `interrupt()` 함수 → 노드 내부에서 호출, Studio UI에 **입력 프롬프트가 자동 표시**되어 직관적
-
-#### 3. 수정 루프 (최대 3회)
-
-```python
-# conditions.py
-def route_after_review(state) -> str:
-    if state.get("is_approved"):
-        return "format_output"
-    if state.get("revision_count", 0) >= 3:  # 무한 루프 방지
-        return "format_output"
-    return "generate_report"  # 보고서 재생성
-```
-
-### LangGraph Studio 테스트
-
-#### 실행 방법
-
-```bash
-# 1. 환경 변수 설정 (.env 파일을 UTF-8로 생성)
-# ⚠️ PowerShell의 echo는 UTF-16으로 저장하므로 주의!
-
-# 2. 개발 서버 실행
-uv run langgraph dev
-```
-
-#### 테스트 입력값
-
-```json
-{
-  "raw_tasks": "API 엔드포인트 구현 완료. UI 개선 70% 진행 중. 다음 주 배포 예정.",
-  "report_period": "2026-02-17 ~ 2026-02-21"
-}
-```
-
-#### Studio UI 사용법
-
-1. `https://smith.langchain.com/studio/?baseUrl=http://localhost:2024` 접속
-2. 좌측에서 `weekly-report` 그래프 선택
-3. Input에 JSON 입력 후 **Submit**
-4. `human_review` 노드에서 그래프 일시정지
-5. 하단 텍스트 영역에 `approve` 입력 후 **Resume** 클릭
-6. 최종 보고서와 요약이 출력됨
-
-### 트러블슈팅
-
-| 문제 | 원인 | 해결 |
-|---|---|---|
-| `.env` 파일 `UnicodeDecodeError` | PowerShell `echo`가 UTF-16으로 저장 | `[System.IO.File]::WriteAllText()` 사용하여 UTF-8(No BOM)으로 생성 |
-| 보고서 초안이 안 보임 | `route_after_review`가 즉시 실행되어 무한 루프 | `HumanReview` 노드를 추가하고 `interrupt()` 함수 사용 |
-| Studio에서 승인 불가 | `interrupt_before` 방식은 State 직접 수정 필요 | `langgraph.types.interrupt()` 함수로 변경하여 UI 입력 프롬프트 표시 |
-
----
-
-## 다음 주차 예고
-
-> **3주차: 미들웨어와 제어 흐름**에서는 Human-in-the-loop, Summarization, PII 보호 등의 미들웨어를 `middlewares.py`에 구현하고, `conditions.py`를 활용한 조건부 분기와 체크포인터를 통한 상태 저장을 학습합니다.
+> **3주차: 미들웨어와 제어 흐름**에서는 Human-in-the-loop(사용자 승인), Summarization(자동 대화 압축), PII(개인정보 보호) 미들웨어를 `middlewares.py`에 적용하고, 체크포인터(Checkpointer)를 통한 상태 저장 및 중단/재개 기법을 배웁니다.

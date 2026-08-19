@@ -1,1145 +1,762 @@
 # 4주차: 엔지니어링 및 운영 최적화 (Engineering & Operations)
 
-> **목표**: 다중 Cast 관리, 테스트 코드 작성, 그리고 LangSmith를 통한 관측 가능성을 확보합니다.
-
----
+> **목표**: 여러 Cast를 하나의 uv workspace에서 관리하고, 서브그래프·pytest·LangSmith를 결합해 변경에 강하고 관측 가능한 Act를 만듭니다.
+>
+> **최종 확인일**: 2026-08-19 · 현재 Act Operator scaffold와 최신 공식 문서 기준
 
 ## 📋 학습 체크리스트
 
-- [ ] Step 1: 모노레포 구조와 다중 Cast 관리
-- [ ] Step 2: 새로운 Cast 추가 (`uv run act cast`)
-- [ ] Step 3: 의존성 관리 (`pyproject.toml`)
-- [ ] Step 4: 서브 그래프 (Subgraph) 연결
-- [ ] Step 5: `testing-cast` 스킬 개요
-- [ ] Step 6: 노드 테스트 작성
-- [ ] Step 7: 그래프 테스트 작성
-- [ ] Step 8: Mocking 전략
-- [ ] Step 9: Fixture와 커버리지
-- [ ] Step 10: LangSmith — 관측 가능성 (Observability)
-- [ ] Step 11: 실습 과제 — 데이터 전처리 Cast + 서브 그래프 + 테스트
-- [ ] 마무리: 복습 퀴즈
+- [ ] Step 1: Act 모노레포와 uv workspace 이해
+- [ ] Step 2: `act cast`로 Cast 추가
+- [ ] Step 3: Cast별 의존성과 workspace 의존성 관리
+- [ ] Step 4: `langgraph.json` 그래프 등록 확인
+- [ ] Step 5: 서브그래프 연결과 persistence 모드 선택
+- [ ] Step 6: `testing-cast`와 테스트 구조 이해
+- [ ] Step 7: 노드 단위 테스트 작성
+- [ ] Step 8: 그래프·라우팅·체크포인터 테스트 작성
+- [ ] Step 9: 외부 의존성 모킹과 커버리지 측정
+- [ ] Step 10: LangSmith tracing·모니터링 구성
+- [ ] Step 11: 데이터 전처리 Cast 통합 실습
+- [ ] 마무리: 운영 점검과 복습 퀴즈
 
 ---
 
-## Step 1: 모노레포 구조와 다중 Cast 관리
+## 시작하기 전에
 
-### 1.1 Act는 모노레포(Monorepo)
-
-1주차에서 배운 것처럼 **Act는 여러 Cast를 포함하는 모노레포**입니다. 각 Cast는 독립적인 워크플로우이며, 자체 의존성을 가집니다.
-
+```bash
+uv sync
+uv run act --help
+uv run pytest
 ```
-my-act/                            # Act (모노레포)
-├── pyproject.toml                  # Act 전체 의존성
-├── .env                            # 환경 변수
-├── langgraph.json                  # 그래프 등록
+
+> [!IMPORTANT]
+> 현재 scaffold의 언어 코드는 `en`과 `kr`입니다. 예전 자료의 `--lang ko`는 사용하지 않습니다.
+
+---
+
+## Step 1: Act 모노레포와 uv workspace
+
+Act는 여러 Cast 패키지를 한 저장소에서 관리하는 uv workspace입니다. 각 Cast는 하나의 LangGraph 그래프 단위이며 자체 `pyproject.toml`을 갖습니다.
+
+```text
+my-act/
+├── pyproject.toml                 # workspace 및 공통 개발 도구 설정
+├── uv.lock                        # workspace 전체가 공유하는 단일 lockfile
+├── langgraph.json                 # 실행할 그래프 진입점 등록
+├── .env                           # 로컬 환경 변수; 커밋 금지
 ├── casts/
-│   ├── chatbot/                    # Cast 1: 챗봇
-│   │   ├── pyproject.toml          # chatbot 전용 의존성
+│   ├── base_graph.py
+│   ├── base_node.py
+│   ├── chatbot/
+│   │   ├── pyproject.toml
 │   │   ├── graph.py
 │   │   └── modules/
-│   │       ├── state.py
-│   │       ├── nodes.py
-│   │       ├── tools.py
-│   │       └── ...
-│   ├── data_preprocessor/          # Cast 2: 데이터 전처리
-│   │   ├── pyproject.toml          # data_preprocessor 전용 의존성
-│   │   ├── graph.py
-│   │   └── modules/
-│   │       └── ...
-│   └── report_generator/           # Cast 3: 보고서 생성
+│   └── data_preprocessor/
 │       ├── pyproject.toml
 │       ├── graph.py
 │       └── modules/
-│           └── ...
 └── tests/
-    ├── conftest.py
-    ├── test_chatbot.py
-    └── test_data_preprocessor.py
+    ├── conftest.py                # 공유 fixture가 필요할 때 생성
+    ├── cast_tests/                # 그래프 단위 테스트
+    └── node_tests/                # 노드 단위 테스트
 ```
-
-### 1.2 왜 여러 Cast를 분리하는가?
-
-| 장점 | 설명 |
-|:---:|---|
-| **독립 의존성** | 각 Cast가 필요한 패키지만 설치 |
-| **독립 배포** | Cast 단위로 개별 배포 가능 |
-| **분업 개발** | 팀원별로 다른 Cast 담당 |
-| **재사용성** | 한 Cast를 다른 Act에서도 사용 가능 |
-
----
-
-## Step 2: 새로운 Cast 추가 (`uv run act cast`)
-
-### 2.1 Cast 추가 명령어
-
-```bash
-# Act 프로젝트 디렉토리 안에서 실행
-uv run act cast
-```
-
-이 명령을 실행하면 대화식으로 Cast 이름을 입력받고, 자동으로 다음을 생성합니다:
-
-```
-casts/{cast_name}/
-├── pyproject.toml
-├── graph.py
-├── CLAUDE.md
-└── modules/
-    ├── __init__.py
-    ├── state.py
-    ├── nodes.py
-    ├── tools.py
-    ├── agents.py
-    ├── models.py
-    ├── prompts.py
-    ├── conditions.py
-    └── middlewares.py
-```
-
-### 2.2 Cast 이름과 옵션
-
-```bash
-# 이름을 직접 지정하여 비대화식으로 생성
-uv run act cast --cast-name "Data Preprocessor"
-
-# 언어 지정 (한국어)
-uv run act cast --cast-name "Data Preprocessor" --lang ko
-```
-
-### 2.3 Cast 추가 후 해야 할 일
-
-```bash
-# 1. 의존성 동기화
-uv sync
-
-# 2. langgraph.json에 새 Cast의 그래프 등록 확인
-# 3. 새 Cast의 CLAUDE.md에 아키텍처 명세 작성 (architecting-act 스킬로)
-```
-
----
-
-## Step 3: 의존성 관리 (`pyproject.toml`)
-
-### 3.1 의존성 계층 구조
-
-모노레포에서는 **두 단계의 의존성**을 관리합니다:
-
-```
-my-act/pyproject.toml             ← Act 공통 의존성 (langgraph, langchain 등)
-├── casts/chatbot/pyproject.toml   ← chatbot 전용 (langchain-openai 등)
-├── casts/data_preprocessor/pyproject.toml   ← data_preprocessor 전용 (pandas 등)
-└── casts/report_generator/pyproject.toml    ← report_generator 전용
-```
-
-### 3.2 Cast별 의존성 추가
-
-```bash
-# 특정 Cast에 패키지 추가
-uv add --package chatbot langchain-openai
-uv add --package data_preprocessor pandas numpy
-
-# 개발 의존성 추가
-uv add --dev pytest pytest-asyncio pytest-cov
-```
-
-### 3.3 Cast별 `pyproject.toml` 예시
 
 ```toml
-# casts/data_preprocessor/pyproject.toml
-[project]
-name = "data-preprocessor"
-version = "0.1.0"
-requires-python = ">=3.11"
-dependencies = [
-    "pandas>=2.0",
-    "numpy>=1.24",
+[tool.uv.workspace]
+members = ["casts/*"]
+exclude = [
+    "casts/__pycache__",
+    "casts/**/__pycache__",
+    "casts/**/.venv",
 ]
 ```
 
-### 3.4 의존성 충돌 방지
+| 항목 | 동작 |
+|---|---|
+| lockfile | 모든 Cast가 루트 `uv.lock` 하나를 공유 |
+| `uv lock` | workspace 전체 의존성을 한 번에 해석 |
+| `uv sync` | 기본적으로 workspace 루트 환경을 동기화 |
+| `uv run --package <name>` | 특정 workspace 멤버 컨텍스트에서 명령 실행 |
+| 패키지 격리 | Python 환경은 완전히 격리되지 않으므로 선언 누락을 테스트로 잡아야 함 |
 
 > [!WARNING]
-> 각 Cast는 독립적인 `pyproject.toml`을 가지므로, Cast 간에 **같은 패키지의 다른 버전**을 사용할 수 있습니다. 하지만 uv workspace에서는 동일 패키지의 버전 충돌에 주의해야 합니다.
+> Cast마다 `pyproject.toml`이 있어도 각각 독립 가상환경을 얻는 것은 아닙니다. 서로 양립할 수 없는 버전을 요구하면 단일 lockfile 해석이 실패합니다.
+
+---
+
+## Step 2: 새로운 Cast 추가
 
 ```bash
-# 의존성 동기화 (충돌 검사 포함)
+uv run act cast
+
+uv run act cast \
+  --path ./my-act \
+  --cast-name "Data Preprocessor" \
+  --lang kr
+```
+
+CLI는 `casts/data_preprocessor/`, `tests/cast_tests/data_preprocessor_test.py`를 만들고 `langgraph.json`에 그래프 진입점을 등록합니다.
+
+```bash
 uv sync
-
-# 잠금 파일 갱신
-uv lock
+uv run pytest tests/cast_tests/data_preprocessor_test.py -v
 ```
+
+> [!NOTE]
+> `act cast`는 기존 파일을 덮어쓰지 않습니다. 같은 이름의 비어 있지 않은 Cast 디렉터리나 테스트 파일이 있으면 중단됩니다.
 
 ---
 
-## Step 4: 서브 그래프 (Subgraph) 연결
-
-### 4.1 서브 그래프란?
-
-서브 그래프는 **하나의 그래프를 다른 그래프의 노드로 사용**하는 패턴입니다. 다중 Cast를 연결하거나 재사용 가능한 워크플로우를 만들 때 사용합니다.
-
-```mermaid
-graph TB
-    subgraph "Parent Graph (챗봇)"
-        START([시작]) --> INPUT[입력 처리]
-        INPUT --> SUB["🔸 서브 그래프<br/>(데이터 전처리)"]
-        SUB --> OUTPUT[출력 생성]
-        OUTPUT --> END1([종료])
-    end
-    
-    subgraph "Subgraph (데이터 전처리)"
-        S_START([시작]) --> CLEAN[데이터 정제]
-        CLEAN --> TRANSFORM[데이터 변환]
-        TRANSFORM --> S_END([종료])
-    end
-    
-    SUB -.->|invoke| S_START
-    S_END -.->|result| SUB
-```
-
-### 4.2 연결 방법 1: 노드에서 호출 (다른 State 스키마)
-
-부모와 서브 그래프의 **State가 다를 때** 사용합니다:
-
-```python
-# casts/{cast_name}/modules/nodes.py
-from casts.base_node import BaseNode
-from .subgraphs import preprocessing_subgraph
-
-
-class PreprocessingNode(BaseNode):
-    def __init__(self):
-        super().__init__()
-        self.subgraph = preprocessing_subgraph
-
-    def execute(self, state):
-        # 1️⃣ 부모 State → 서브 그래프 입력으로 변환
-        subgraph_input = {"raw_data": state["user_input"]}
-        
-        # 2️⃣ 서브 그래프 호출
-        subgraph_output = self.subgraph.invoke(subgraph_input)
-        
-        # 3️⃣ 서브 그래프 출력 → 부모 State로 변환
-        return {"processed_data": subgraph_output["result"]}
-```
-
-### 4.3 서브 그래프 정의
-
-```python
-# casts/{cast_name}/modules/subgraphs.py
-from typing_extensions import TypedDict
-from langgraph.graph import StateGraph, START, END
-
-
-class PreprocessState(TypedDict):
-    raw_data: str
-    result: str
-
-
-def clean_data(state: PreprocessState):
-    cleaned = state["raw_data"].strip().lower()
-    return {"result": cleaned}
-
-
-def transform_data(state: PreprocessState):
-    transformed = state["result"].replace(" ", "_")
-    return {"result": f"processed: {transformed}"}
-
-
-# 서브 그래프 빌드
-builder = StateGraph(PreprocessState)
-builder.add_node("clean", clean_data)
-builder.add_node("transform", transform_data)
-builder.add_edge(START, "clean")
-builder.add_edge("clean", "transform")
-builder.add_edge("transform", END)
-
-preprocessing_subgraph = builder.compile()
-```
-
-### 4.4 연결 방법 2: 노드로 직접 등록 (같은 State 키 공유)
-
-부모와 서브 그래프가 **같은 State 키를 공유**할 때:
-
-```python
-# casts/{cast_name}/graph.py
-from casts.{cast_name}.modules.subgraphs import shared_subgraph
-
-
-class ParentGraph(BaseGraph):
-    def build(self):
-        builder = StateGraph(State)
-        
-        builder.add_node("preprocess", PreprocessNode())
-        builder.add_node("subgraph", shared_subgraph)   # 컴파일된 그래프를 직접 등록!
-        builder.add_node("postprocess", PostprocessNode())
-        
-        builder.add_edge(START, "preprocess")
-        builder.add_edge("preprocess", "subgraph")
-        builder.add_edge("subgraph", "postprocess")
-        builder.add_edge("postprocess", END)
-        
-        graph = builder.compile()
-        graph.name = self.name
-        return graph
-```
-
-### 4.5 선택 기준
-
-```
-부모와 서브 그래프가 State 키를 공유하나요?
-├─ Yes → builder.add_node("name", subgraph)  # 직접 등록
-└─ No  → 노드 안에서 invoke하고 State 변환     # 노드에서 호출
-```
-
-### 4.6 체크포인터와 서브 그래프
-
-> [!IMPORTANT]
-> 체크포인터는 **부모 그래프에만** 설정하면 서브 그래프에 자동 전파됩니다. 서브 그래프에 별도로 설정하지 마세요.
-
-```python
-# 부모 그래프에만 체크포인터 설정
-graph = builder.compile(checkpointer=MemorySaver())
-# → 서브 그래프에도 자동 적용됨
-```
-
----
-
-## Step 5: `testing-cast` 스킬 개요
-
-### 5.1 스킬 소개
-
-`testing-cast`는 pytest 기반 테스트 코드의 자동 생성 및 실행을 돕는 AI 스킬입니다.
-
-```
-💬 AI에게 요청 예시:
-
-"@testing-cast를 사용하여 chatbot Cast의 테스트를 작성해 줘"
-```
-
-### 5.2 리소스 구조
-
-| 리소스 | 내용 |
-|:---:|---|
-| `testing-nodes.md` | 노드 테스트 (동기/비동기, config/runtime) |
-| `testing-graphs.md` | 그래프 테스트 (라우팅, 체크포인터, 스트리밍) |
-| `mocking.md` | LLM, 도구, API, Store 모킹 전략 |
-| `fixtures.md` | conftest.py 템플릿과 재사용 fixture |
-| `coverage.md` | 커버리지 측정과 CI 통합 |
-
-### 5.3 테스트 디렉토리 구조
-
-```
-casts/{cast_name}/
-└── tests/
-    ├── conftest.py       # 공유 Fixture
-    ├── test_nodes.py     # 노드 유닛 테스트
-    └── test_graph.py     # 그래프 통합 테스트
-```
-
-### 5.4 테스트 실행 명령어
+## Step 3: 의존성 관리
 
 ```bash
-# 전체 테스트 실행
-uv run pytest
+# 외부 패키지를 특정 Cast에 추가
+uv add --package data-preprocessor pandas
+uv add --package chatbot langchain-openai
 
-# 특정 파일만
-uv run pytest tests/test_nodes.py
+# 테스트 도구는 루트 dependency group에 추가
+uv add --group test pytest-cov pytest-mock
 
-# 특정 테스트 함수만
-uv run pytest -k "test_my_function"
-
-# 상세 출력
-uv run pytest -v
-
-# 첫 번째 실패 시 중단
-uv run pytest -x
-
-# 이전에 실패한 테스트만 재실행
-uv run pytest --lf
 ```
 
----
+현재 scaffold의 Cast `pyproject.toml`에는 `[build-system]`이 없습니다. 따라서 Cast 코드는 Act 루트에서 `casts.<cast_name>` namespace로 import되지만, workspace 멤버 자체가 독립 설치 패키지로 빌드되지는 않습니다.
 
-## Step 6: 노드 테스트 작성
-
-### 6.1 기본 노드 테스트
-
-```python
-# tests/test_nodes.py
-import pytest
-from casts.chatbot.modules.nodes import ProcessNode
-
-
-class TestProcessNode:
-    def test_execute_returns_output(self):
-        """정상 입력에 대해 output 키를 반환하는지 확인."""
-        node = ProcessNode()
-        state = {"input": "안녕하세요"}
-        
-        result = node.execute(state)
-        
-        assert "output" in result            # output 키 존재
-        assert isinstance(result, dict)      # dict 반환
-
-    def test_execute_with_empty_input(self):
-        """빈 입력을 처리할 수 있는지 확인."""
-        node = ProcessNode()
-        state = {}
-        
-        result = node.execute(state)
-        
-        assert result is not None
-```
-
-### 6.2 비동기 노드 테스트
-
-```python
-import pytest
-
-class TestAsyncFetchNode:
-    @pytest.mark.asyncio
-    async def test_execute(self):
-        """비동기 노드가 정상적으로 실행되는지 확인."""
-        node = AsyncFetchNode()
-        state = {"query": "test"}
-        
-        result = await node.execute(state)
-        
-        assert "data" in result
-```
-
-### 6.3 Config/Runtime을 사용하는 노드
-
-```python
-def test_with_config(self):
-    """config에서 thread_id를 읽는 노드 테스트."""
-    node = MyNode()
-    state = {"input": "test"}
-    config = {"configurable": {"thread_id": "test-123"}}
-    
-    result = node.execute(state, config=config)
-    
-    assert result["thread_id"] == "test-123"
-```
-
-### 6.4 파라미터화 테스트
-
-여러 입력 조합을 한 번에 테스트:
-
-```python
-@pytest.mark.parametrize("input_val,expected_key", [
-    ("hello", "processed"),
-    ("", "error"),
-    (None, "error"),
-])
-def test_parametrized(self, input_val, expected_key):
-    node = ProcessNode()
-    result = node.execute({"input": input_val})
-    
-    assert expected_key in result
-```
-
-### 6.5 Arrange-Act-Assert 패턴
-
-모든 테스트를 3단계로 구성합니다:
-
-```python
-def test_node_processing(self):
-    # Arrange (준비)
-    node = ProcessNode()
-    state = {"input": "raw data", "existing": "value"}
-    
-    # Act (실행)
-    result = node.execute(state)
-    
-    # Assert (검증)
-    assert "processed" in result
-    assert "existing" not in result    # 업데이트 키만 반환하는지 확인
-```
-
----
-
-## Step 7: 그래프 테스트 작성
-
-### 7.1 그래프 컴파일 테스트
-
-```python
-# tests/test_graph.py
-import pytest
-from casts.chatbot.graph import ChatbotGraph
-
-
-class TestChatbotGraph:
-    @pytest.fixture
-    def graph(self):
-        """테스트용 그래프 인스턴스 생성."""
-        return ChatbotGraph().build()
-
-    def test_compiles(self, graph):
-        """그래프가 정상적으로 컴파일되는지 확인."""
-        assert graph is not None
-        assert hasattr(graph, "invoke")
-
-    def test_has_expected_nodes(self, graph):
-        """예상된 노드가 모두 존재하는지 검증."""
-        expected = ["input", "process", "output"]
-        for node_name in expected:
-            assert node_name in graph.nodes
-```
-
-### 7.2 그래프 호출 테스트
-
-```python
-    def test_invoke_basic(self, graph):
-        """기본 입력으로 그래프를 실행하고 결과 확인."""
-        result = graph.invoke({"input": "test"})
-        
-        assert result is not None
-        assert isinstance(result, dict)
-```
-
-### 7.3 조건부 라우팅 테스트
-
-```python
-    @pytest.mark.parametrize("condition,expected_path", [
-        (True, "path_a"),
-        (False, "path_b"),
-        (None, "default"),
-    ])
-    def test_routing(self, graph, condition, expected_path):
-        """조건에 따라 올바른 경로로 라우팅되는지 검증."""
-        result = graph.invoke({"condition": condition})
-        assert result["path"] == expected_path
-```
-
-### 7.4 체크포인터 + 멀티턴 테스트
-
-```python
-from langgraph.checkpoint.memory import MemorySaver
-
-class TestMultiTurn:
-    @pytest.fixture
-    def graph_with_memory(self):
-        return ChatbotGraph().build(checkpointer=MemorySaver())
-
-    def test_multi_turn_conversation(self, graph_with_memory):
-        """여러 턴에 걸쳐 대화 맥락이 유지되는지 확인."""
-        config = {"configurable": {"thread_id": "test-123"}}
-        
-        # 첫 번째 턴
-        result1 = graph_with_memory.invoke({"input": "Hello"}, config=config)
-        
-        # 두 번째 턴 — 이전 맥락을 기억해야 함
-        result2 = graph_with_memory.invoke({"input": "What did I say?"}, config=config)
-        
-        assert len(result2["messages"]) > 1
-
-    def test_threads_are_isolated(self, graph_with_memory):
-        """서로 다른 thread_id의 대화가 격리되는지 확인."""
-        config1 = {"configurable": {"thread_id": "user-1"}}
-        config2 = {"configurable": {"thread_id": "user-2"}}
-        
-        graph_with_memory.invoke({"input": "I am User 1"}, config=config1)
-        result = graph_with_memory.invoke({"input": "Who am I?"}, config=config2)
-        
-        assert "User 1" not in str(result)
-```
-
-### 7.5 스트리밍 테스트
-
-```python
-    def test_stream_updates(self, graph):
-        """스트리밍 모드에서 업데이트가 정상적으로 전달되는지 확인."""
-        chunks = list(graph.stream({"input": "test"}, stream_mode="updates"))
-        
-        assert len(chunks) > 0
-        for chunk in chunks:
-            assert isinstance(chunk, dict)
-```
-
----
-
-## Step 8: Mocking 전략
-
-### 8.1 LLM Mocking — 왜 필요한가?
-
-테스트에서 **실제 LLM API를 호출하면**:
-- 💰 비용 발생
-- 🐢 느린 응답
-- 🎲 비결정적 (매번 다른 응답)
-- 🌐 네트워크 의존성
-
-### 8.2 FakeListLLM 사용
-
-```python
-from langchain_core.language_models.fake import FakeListLLM
-
-
-def test_with_fake_llm():
-    """미리 정의된 응답을 반환하는 Fake LLM 사용."""
-    llm = FakeListLLM(responses=["첫 번째 응답", "두 번째 응답"])
-    node = LLMNode()
-    node.llm = llm
-    
-    result = node.execute({"input": "test"})
-    assert "첫 번째 응답" in result["output"]
-```
-
-### 8.3 Custom Mock LLM
-
-호출 기록을 추적해야 할 때:
-
-```python
-class MockLLM:
-    def __init__(self, response="mocked"):
-        self.response = response
-        self.calls = []              # 호출 기록
-
-    def invoke(self, messages):
-        self.calls.append(messages)  # 호출 추적
-        return {"content": self.response}
-
-    def bind_tools(self, tools):
-        return self                  # 도구 바인딩 지원
-
-
-def test_tracks_llm_calls():
-    mock = MockLLM()
-    node = MyNode()
-    node.llm = mock
-    
-    node.execute({"messages": [{"role": "user", "content": "hi"}]})
-    
-    assert len(mock.calls) == 1      # 1회 호출 확인
-```
-
-### 8.4 도구 Mocking (`monkeypatch`)
-
-```python
-def test_mock_tool(monkeypatch):
-    """도구의 실제 실행을 Mock으로 대체."""
-    def mock_search(query: str) -> str:
-        return f"Mocked: {query}"
-    
-    monkeypatch.setattr("casts.chatbot.modules.tools.web_search", mock_search)
-    
-    node = ToolNode()
-    result = node.execute({"query": "test"})
-    
-    assert "Mocked" in result["output"]
-```
-
-### 8.5 외부 API Mocking
-
-```python
-import responses
-
-@responses.activate
-def test_api_call():
-    """외부 API 호출을 Mock으로 대체."""
-    responses.add(
-        responses.GET,
-        "https://api.example.com/data",
-        json={"result": "mocked"},
-        status=200
-    )
-    
-    node = APINode()
-    result = node.execute({"endpoint": "/data"})
-    
-    assert result["data"]["result"] == "mocked"
-```
-
-### 8.6 Store Mocking
-
-```python
-class MockStore:
-    def __init__(self):
-        self.data = {}
-
-    def get(self, namespace, key):
-        return self.data.get((tuple(namespace), key))
-
-    def put(self, namespace, key, value):
-        self.data[(tuple(namespace), key)] = value
-
-
-def test_with_store():
-    store = MockStore()
-    store.put(("user", "123"), "prefs", {"theme": "dark"})
-    
-    class MockRuntime:
-        def __init__(self, store):
-            self.store = store
-    
-    node = MemoryNode()
-    runtime = MockRuntime(store)
-    result = node.execute({"user_id": "123"}, runtime=runtime)
-    
-    assert result["preferences"]["theme"] == "dark"
-```
-
----
-
-## Step 9: Fixture와 커버리지
-
-### 9.1 `conftest.py` — 공유 Fixture
-
-테스트 간 공유되는 설정을 `conftest.py`에 정의합니다:
-
-```python
-# tests/conftest.py
-import pytest
-from langgraph.checkpoint.memory import MemorySaver
-
-
-# ── State Fixture ──
-@pytest.fixture
-def empty_state():
-    return {"input": "", "messages": [], "result": None}
-
-@pytest.fixture
-def populated_state():
-    return {
-        "input": "test query",
-        "messages": [{"role": "user", "content": "hello"}],
-        "context": {},
-    }
-
-# ── Config Fixture ──
-@pytest.fixture
-def mock_config():
-    return {"configurable": {"thread_id": "test-123"}}
-
-# ── Mock Fixture ──
-@pytest.fixture
-def mock_llm():
-    class MockLLM:
-        def __init__(self, response="mocked"):
-            self.response = response
-            self.calls = []
-        def invoke(self, messages):
-            self.calls.append(messages)
-            return {"content": self.response}
-        def bind_tools(self, tools):
-            return self
-    return MockLLM()
-
-# ── Factory Fixture ──
-@pytest.fixture
-def make_state():
-    """커스텀 State를 생성하는 팩토리."""
-    def _make(**kwargs):
-        default = {"input": "", "messages": [], "result": None}
-        default.update(kwargs)
-        return default
-    return _make
-```
-
-### 9.2 Fixture 스코프
-
-| 스코프 | 생성 빈도 | 용도 |
-|:---:|:---:|---|
-| `function` (기본) | 매 테스트마다 | 일반적인 경우 |
-| `module` | 파일당 한 번 | DB 연결 등 |
-| `session` | 전체 테스트 당 한 번 | 매우 비싼 리소스 |
-
-```python
-@pytest.fixture(scope="session")
-def expensive_resource():
-    resource = setup_expensive()
-    yield resource
-    teardown(resource)
-```
-
-### 9.3 커버리지 측정
-
-```bash
-# 기본 커버리지
-uv run pytest --cov=casts tests/
-
-# HTML 보고서 생성
-uv run pytest --cov=casts --cov-report=html tests/
-
-# 미커버 라인 표시
-uv run pytest --cov=casts --cov-report=term-missing
-
-# 분기 커버리지
-uv run pytest --cov=casts --cov-branch tests/
-```
-
-### 9.4 커버리지 목표
-
-| 컴포넌트 | 목표 |
-|:---:|:---:|
-| 노드 (비즈니스 로직) | **90%+** |
-| State 로직 | **85%+** |
-| 그래프 컴파일 | **80%+** |
-| 통합 테스트 | 핵심 경로 위주 |
-
-> [!TIP]
-> **100% 커버리지는 목표가 아닙니다.** 핵심 비즈니스 로직, 에러 경로, 엣지 케이스에 집중하세요.
-
-### 9.5 `pyproject.toml`에 커버리지 설정
+Cast를 독립 배포 가능한 패키지로 전환한 뒤 다른 Cast의 정식 의존성으로 사용할 때만 다음 source 선언을 추가합니다.
 
 ```toml
-[tool.pytest.ini_options]
-addopts = "--cov=casts --cov-report=term-missing"
+# casts/chatbot/pyproject.toml
+[project]
+dependencies = ["data-preprocessor"]
 
-[tool.coverage.run]
-branch = true
-source = ["casts"]
-omit = ["*/tests/*", "*/conftest.py"]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "if TYPE_CHECKING:",
-    "raise NotImplementedError",
-]
+[tool.uv.sources]
+data-preprocessor = { workspace = true }
 ```
-
-### 9.6 CI 통합 (GitHub Actions)
-
-```yaml
-# .github/workflows/test.yml
-- name: Test with coverage
-  run: |
-    uv run pytest --cov=casts --cov-report=xml --cov-fail-under=80
-```
-
----
-
-## Step 10: LangSmith — 관측 가능성 (Observability)
-
-### 10.1 LangSmith란?
-
-LangSmith는 LangChain에서 제공하는 **관측 가능성 플랫폼**으로, 에이전트의 실행 과정을 시각화하고 디버깅할 수 있습니다.
-
-```
-에이전트의 각 단계를 trace로 기록:
-
-[입력] → [노드1 실행 / 1.2초] → [모델 호출 / 3.4초] → [도구 실행 / 0.8초] → [출력]
-         └── 입력/출력 데이터    └── 프롬프트/응답     └── 도구 인자/결과
-```
-
-### 10.2 LangSmith 설정
-
-#### A. 계정 생성 및 API 키 발급
-
-1. [smith.langchain.com](https://smith.langchain.com) 접속
-2. 회원가입 (무료 티어 사용 가능)
-3. Settings → API Keys → Create API Key
-
-#### B. 환경 변수 설정
 
 ```bash
-# .env 파일에 추가
-LANGSMITH_TRACING=true
-LANGSMITH_PROJECT=my-act-project
-LANGSMITH_API_KEY=lsv2_pt_xxxxxxxxxxxx
-```
-
-| 환경 변수 | 설명 |
-|:---:|---|
-| `LANGSMITH_TRACING` | `true`로 설정하면 추적 활성화 |
-| `LANGSMITH_PROJECT` | LangSmith 대시보드에서 그룹화할 프로젝트 이름 |
-| `LANGSMITH_API_KEY` | API 인증 키 |
-
-### 10.3 Trace에서 확인할 수 있는 것
-
-| 정보 | 설명 |
-|:---:|---|
-| **실행 흐름** | 어떤 노드가 어떤 순서로 실행되었는지 |
-| **입출력 데이터** | 각 노드의 입력 State와 출력 State |
-| **LLM 호출** | 프롬프트, 모델 응답, 토큰 수, 비용 |
-| **도구 호출** | 도구 이름, 인자, 실행 결과 |
-| **소요 시간** | 각 단계별 실행 시간 (병목 발견) |
-| **에러** | 어디서 어떤 에러가 발생했는지 |
-
-### 10.4 디버깅 시나리오
-
-```
-문제: 에이전트가 잘못된 도구를 호출한다
-
-LangSmith에서 확인:
-1. Trace → 해당 실행 선택
-2. 모델 호출 단계 → 프롬프트 확인
-3. 도구 호출 단계 → 어떤 도구를 어떤 인자로 호출했는지 확인
-4. 원인: 시스템 프롬프트가 도구 선택을 잘 안내하지 못함
-5. 해결: prompts.py의 시스템 프롬프트 수정
-```
-
-### 10.5 LangGraph Studio + LangSmith
-
-개발 서버(`uv run langgraph dev`)를 실행할 때 LangSmith가 설정되어 있으면, **LangGraph Studio에서도 trace 링크**를 직접 확인할 수 있습니다.
-
----
-
-## Step 11: 실습 과제 — 데이터 전처리 Cast + 서브 그래프 + 테스트
-
-### 11.1 과제 목표
-
-| 항목 | 내용 |
-|:---:|---|
-| **기존 Cast** | `chatbot` (또는 이전 실습에서 만든 Cast) |
-| **새 Cast** | `data_preprocessor` (데이터 전처리) |
-| **연결 방법** | 서브 그래프로 연결 |
-| **테스트** | 노드 + 그래프 테스트 작성 |
-
-### 11.2 과제 진행 순서
-
-#### 📄 A. 새 Cast 생성
-
-```bash
-cd my-act/
-uv run act cast --cast-name "Data Preprocessor"
+uv lock --check
 uv sync
+uv tree
+uv run --package chatbot python -c "import casts.data_preprocessor"
 ```
 
-#### 📄 B. 서브 그래프 정의 (`subgraphs.py`)
+이 경우 대상 Cast에 실제 package layout과 `[build-system]`도 먼저 구성해야 합니다. 생성 직후의 기본 scaffold에 `uv add ... --workspace`만 실행하면 uv가 빌드할 패키지가 없어 실패할 수 있습니다.
 
-```python
-# casts/data_preprocessor/modules/subgraphs.py
-from typing_extensions import TypedDict
-from langgraph.graph import StateGraph, START, END
+의존성 충돌이 나면 `uv tree --invert --package <package>`로 요구 주체를 찾고 공통 버전 범위를 정합니다. 진짜 격리가 필요하면 프로세스나 배포 단위를 분리합니다.
 
+---
 
-class PreprocessState(TypedDict):
-    raw_text: str
-    cleaned_text: str
-    word_count: int
+## Step 4: `langgraph.json` 그래프 등록
 
+`act cast`는 새 그래프를 자동 등록합니다.
 
-def clean_text(state: PreprocessState):
-    """텍스트를 정제합니다."""
-    text = state["raw_text"].strip()
-    # 불필요한 공백, 특수문자 제거
-    cleaned = " ".join(text.split())
-    return {"cleaned_text": cleaned}
-
-
-def count_words(state: PreprocessState):
-    """단어 수를 계산합니다."""
-    words = state["cleaned_text"].split()
-    return {"word_count": len(words)}
-
-
-# 서브 그래프 빌드
-builder = StateGraph(PreprocessState)
-builder.add_node("clean", clean_text)
-builder.add_node("count", count_words)
-builder.add_edge(START, "clean")
-builder.add_edge("clean", "count")
-builder.add_edge("count", END)
-
-preprocessing_graph = builder.compile()
+```json
+{
+  "dependencies": ["."],
+  "graphs": {
+    "chatbot": "./casts/chatbot/graph.py:chatbot_graph",
+    "data-preprocessor": "./casts/data_preprocessor/graph.py:data_preprocessor_graph"
+  },
+  "env": ".env"
+}
 ```
 
-#### 📄 C. 메인 Cast에서 서브 그래프 호출
+현재 scaffold의 `<cast>_graph`는 `BaseGraph` 인스턴스이며 `__call__()`이 컴파일된 그래프를 반환합니다.
 
 ```python
-# casts/chatbot/modules/nodes.py
+data_preprocessor_graph = DataPreprocessorGraph()
+```
+
+```bash
+uv run langgraph dev
+```
+
+> [!TIP]
+> `langgraph.json`의 키는 외부 그래프 ID, 콜론 뒤 이름은 Python 모듈에 실제 존재하는 진입점입니다. 이름 변경 시 둘을 함께 갱신하세요.
+
+---
+
+## Step 5: 서브그래프 연결과 persistence
+
+서브그래프는 컴파일된 그래프를 상위 그래프의 노드처럼 재사용하는 패턴입니다.
+
+```mermaid
+flowchart LR
+    START --> PREP[입력 준비]
+    PREP --> SUB[[data_preprocessor 서브그래프]]
+    SUB --> ANSWER[응답 생성]
+    ANSWER --> END
+```
+
+### 5.1 상태 키를 공유할 때: 그래프를 노드로 등록
+
+```python
+from __future__ import annotations
+
+from langgraph.graph import END, START, StateGraph
+
+from casts.data_preprocessor.graph import data_preprocessor_graph
+
+
+preprocessing_subgraph = data_preprocessor_graph()
+
+builder = StateGraph(State)
+builder.add_node("preprocess", preprocessing_subgraph)
+builder.add_node("answer", AnswerNode())
+builder.add_edge(START, "preprocess")
+builder.add_edge("preprocess", "answer")
+builder.add_edge("answer", END)
+```
+
+부모와 자식이 공유하는 키의 타입과 reducer가 호환되어야 합니다.
+
+### 5.2 상태 스키마가 다를 때: 어댑터 노드에서 호출
+
+```python
+from __future__ import annotations
+
 from casts.base_node import BaseNode
-from casts.data_preprocessor.modules.subgraphs import preprocessing_graph
+from casts.data_preprocessor.graph import data_preprocessor_graph
 
 
 class PreprocessNode(BaseNode):
-    def __init__(self):
-        super().__init__()
-        self.preprocessor = preprocessing_graph
+    """부모 State와 전처리 Cast State 사이를 변환합니다."""
 
-    def execute(self, state):
-        result = self.preprocessor.invoke({"raw_text": state["query"]})
+    def __init__(self) -> None:
+        super().__init__()
+        self.subgraph = data_preprocessor_graph()
+
+    def execute(self, state: State) -> dict[str, object]:
+        result = self.subgraph.invoke({"query": state["query"]})
+        return {"processed_query": result["result"]}
+```
+
+### 5.3 최신 persistence 모드
+
+서브그래프를 `compile()`할 때 `checkpointer` 값으로 내부 상태 보존 범위를 선택합니다.
+
+| 설정 | 의미 | 권장 상황 |
+|---|---|---|
+| `None` 또는 생략 | 호출별 격리, 부모 checkpointer 상속 | 대부분의 일회성 서브그래프 |
+| `True` | 같은 thread에서 호출 간 내부 상태 유지 | 멀티턴 전문 에이전트 |
+| `False` | checkpointing 비활성화 | 중단·복구가 필요 없는 순수 계산 |
+
+```python
+subgraph = subgraph_builder.compile()
+stateful_subgraph = subgraph_builder.compile(checkpointer=True)
+stateless_subgraph = subgraph_builder.compile(checkpointer=False)
+```
+
+상위 그래프에 persistence 기능을 사용하려면 부모도 checkpointer와 `thread_id`를 가져야 합니다.
+
+```python
+from langgraph.checkpoint.memory import InMemorySaver
+
+graph = builder.compile(checkpointer=InMemorySaver())
+config = {"configurable": {"thread_id": "week4-demo"}}
+```
+
+> [!WARNING]
+> `checkpointer=True`인 동일 서브그래프 인스턴스를 한 노드에서 병렬 또는 반복 호출하면 checkpoint namespace 충돌이 날 수 있습니다. 독립 작업은 기본값인 호출별 persistence를 우선 사용하세요.
+
+---
+
+## Step 6: `testing-cast`와 테스트 구조
+
+현재 scaffold에는 `.claude/skills/testing-cast/`가 포함됩니다.
+
+```text
+.claude/skills/testing-cast/
+├── SKILL.md
+└── resources/
+    ├── testing-nodes.md
+    ├── testing-graphs.md
+    ├── mocking.md
+    ├── fixtures.md
+    └── coverage.md
+```
+
+```text
+@testing-cast를 사용해 data_preprocessor Cast의 노드 단위 테스트와
+그래프 통합 테스트를 작성하고, 외부 API 호출은 모킹해 줘.
+```
+
+| 위치 | 이름 규칙 | 범위 |
+|---|---|---|
+| `tests/cast_tests/<cast_snake>_test.py` | 접미사 `_test.py` | 전체 그래프 호출 |
+| `tests/node_tests/test_<name>.py` | 접두사 `test_` | 개별 노드 동작 |
+| `tests/conftest.py` | 고정 | 공유 fixture |
+
+`act cast`가 만드는 Cast 테스트 이름은 `test_<cast>.py`가 아니라 `<cast>_test.py`입니다.
+
+```bash
+uv run pytest --collect-only -q
+uv run pytest tests/node_tests/ -v
+uv run pytest tests/cast_tests/ -v
+```
+
+---
+
+## Step 7: 노드 단위 테스트
+
+노드 테스트는 그래프 전체가 아니라 입력 State에 대한 업데이트만 검증합니다.
+
+```python
+from __future__ import annotations
+
+import pytest
+
+from casts.data_preprocessor.modules.nodes import CleanTextNode
+
+
+@pytest.mark.parametrize(
+    ("raw_text", "expected"),
+    [
+        ("  hello    world  ", "hello world"),
+        ("", ""),
+        ("한글   공백", "한글 공백"),
+    ],
+)
+def test_clean_text_node(raw_text: str, expected: str) -> None:
+    node = CleanTextNode()
+
+    result = node({"raw_text": raw_text})
+
+    assert result == {"cleaned_text": expected}
+```
+
+`node.execute(...)` 대신 `node(...)`를 호출하면 `BaseNode.__call__()`의 반환 타입 검증까지 함께 확인할 수 있습니다. 순수 비즈니스 로직만 격리하려면 `execute()`를 직접 테스트해도 됩니다.
+
+```python
+from __future__ import annotations
+
+import pytest
+
+from casts.data_preprocessor.modules.nodes import FetchMetadataNode
+
+
+@pytest.mark.asyncio
+async def test_fetch_metadata_node() -> None:
+    node = FetchMetadataNode()
+
+    result = await node({"document_id": "doc-1"})
+
+    assert result["metadata"]["document_id"] == "doc-1"
+```
+
+테스트는 구현 세부사항보다 관찰 가능한 계약을 검증합니다.
+
+- 반환값은 State 전체 복사본이 아니라 변경할 키의 업데이트인가?
+- 빈 입력과 잘못된 입력에서 의도한 오류가 발생하는가?
+- 같은 입력에 대해 결정적인 결과를 내는가?
+
+---
+
+## Step 8: 그래프·라우팅·체크포인터 테스트
+
+### 8.1 그래프 호출
+
+현재 scaffold가 자동 생성하는 테스트는 그래프 팩터리 역할을 하는 `BaseGraph` 인스턴스를 호출합니다.
+
+```python
+from __future__ import annotations
+
+from casts.data_preprocessor.graph import data_preprocessor_graph
+
+
+def test_graph_normalizes_text() -> None:
+    graph = data_preprocessor_graph()
+
+    result = graph.invoke({"query": "  Hello    Act  "})
+
+    assert result["result"] == "Hello Act"
+```
+
+### 8.2 각 테스트에서 새 checkpointer 사용
+
+상태 누출을 막기 위해 테스트마다 새 그래프와 새 `InMemorySaver`를 만듭니다.
+
+```python
+from __future__ import annotations
+
+import pytest
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph.state import CompiledStateGraph
+
+from casts.chatbot.graph import build_chatbot_graph
+
+
+@pytest.fixture
+def graph_with_memory() -> CompiledStateGraph:
+    return build_chatbot_graph(checkpointer=InMemorySaver())
+
+
+def test_threads_are_isolated(graph_with_memory: CompiledStateGraph) -> None:
+    first = {"configurable": {"thread_id": "user-1"}}
+    second = {"configurable": {"thread_id": "user-2"}}
+
+    graph_with_memory.invoke({"query": "first"}, config=first)
+    result = graph_with_memory.invoke({"query": "second"}, config=second)
+
+    assert result["query"] == "second"
+```
+
+위 `build_chatbot_graph()`는 테스트 가능한 조립 함수의 예시입니다. 현재 `BaseGraph.build()`가 인자를 받지 않으므로 persistence를 테스트해야 한다면 builder 조립 함수를 분리해 checkpointer를 주입하세요.
+
+### 8.3 라우팅 테스트
+
+라우터 함수는 가능한 한 순수 함수로 두고 직접 테스트합니다.
+
+```python
+from __future__ import annotations
+
+import pytest
+
+from casts.chatbot.modules.conditions import route_after_validation
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [
+        ({"is_valid": True}, "process"),
+        ({"is_valid": False}, "reject"),
+    ],
+)
+def test_route_after_validation(
+    state: dict[str, bool],
+    expected: str,
+) -> None:
+    assert route_after_validation(state) == expected
+```
+
+스트리밍은 chunk 개수보다 이벤트 계약을 검증합니다. 하위 그래프 스트림이 필요하면 사용 중인 LangGraph runtime의 stream API와 `streaming-cast` 스킬을 기준으로 테스트하세요.
+
+---
+
+## Step 9: 모킹과 커버리지
+
+LLM, HTTP API, 데이터베이스, Store 같은 외부 경계를 모킹하면 비용·지연·비결정성을 제거할 수 있습니다.
+
+```python
+from __future__ import annotations
+
+from unittest.mock import Mock
+
+from langchain_core.messages import AIMessage
+
+from casts.chatbot.modules.nodes import AnswerNode
+
+
+def test_answer_node_uses_model() -> None:
+    model = Mock()
+    model.invoke.return_value = AIMessage(content="고정 응답")
+    node = AnswerNode(model=model)
+
+    result = node({"query": "질문"})
+
+    assert result["answer"] == "고정 응답"
+    model.invoke.assert_called_once()
+```
+
+의존성을 생성자나 팩터리 인자로 주입하면 내부 속성을 강제로 바꾸는 테스트보다 계약이 명확해집니다.
+
+```python
+from __future__ import annotations
+
+from casts.chatbot.modules.nodes import SearchNode
+
+
+def test_search_boundary(monkeypatch) -> None:
+    def fake_search(query: str) -> list[str]:
+        return [f"result:{query}"]
+
+    monkeypatch.setattr(
+        "casts.chatbot.modules.nodes.search_documents",
+        fake_search,
+    )
+
+    result = SearchNode()({"query": "act"})
+
+    assert result == {"documents": ["result:act"]}
+```
+
+patch 대상은 함수가 정의된 모듈이 아니라 **테스트 대상이 그 이름을 조회하는 모듈**이어야 합니다.
+
+```bash
+uv run pytest --cov=casts --cov-branch --cov-report=term-missing
+uv run pytest --cov=casts --cov-report=html
+```
+
+커버리지는 목표가 아니라 누락을 찾는 신호입니다. 조건부 edge의 모든 분기, 재시도·타임아웃, 외부 쓰기의 중복 실행 방지, interrupt 재개, 서브그래프 변환 실패를 우선 검증합니다.
+
+---
+
+## Step 10: LangSmith 관측 가능성
+
+LangSmith는 한 요청을 **trace**, trace 안의 모델·도구·노드 실행을 **run**, 여러 대화 턴을 **thread**로 구성합니다. 프로젝트는 관련 trace를 묶는 컨테이너입니다.
+
+### 10.1 tracing 활성화
+
+`.env`에 다음 값을 설정합니다.
+
+```dotenv
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=lsv2_pt_replace_me
+LANGSMITH_PROJECT=my-act-dev
+```
+
+여러 LangSmith workspace에 연결된 키라면 `LANGSMITH_WORKSPACE_ID`도 지정합니다. 자체 호스팅 또는 다른 endpoint를 쓸 때만 `LANGSMITH_ENDPOINT`를 추가합니다.
+
+> [!CAUTION]
+> `.env`와 API 키를 Git에 커밋하지 마세요. trace에는 프롬프트, 사용자 입력, 도구 인자와 결과가 포함될 수 있으므로 PII·비밀정보의 수집, 마스킹, 보존 정책을 먼저 정해야 합니다.
+
+LangChain/LangGraph 연동은 환경 변수가 설정되면 지원되는 실행을 자동 추적합니다.
+
+```bash
+uv run langgraph dev
+```
+
+### 10.2 trace에 운영 문맥 추가
+
+```python
+config = {
+    "configurable": {"thread_id": "conversation-42"},
+    "tags": ["week4", "staging"],
+    "metadata": {
+        "thread_id": "conversation-42",
+        "app_version": "0.4.0",
+        "cast": "chatbot",
+    },
+}
+
+result = graph.invoke({"query": "Act란 무엇인가요?"}, config=config)
+```
+
+`thread_id`, `session_id`, `conversation_id` 같은 공통 식별자를 metadata에 전달하면 멀티턴 trace를 thread로 연결할 수 있습니다.
+
+### 10.3 관측에서 평가로
+
+| 단계 | 확인 항목 |
+|---|---|
+| 개별 trace | 잘못된 도구 선택, 프롬프트, 인자, 오류 위치 |
+| dashboard | trace 수, 오류율, latency, token 사용량, 비용 추세 |
+| feedback | 사용자·검토자의 품질 점수 |
+| offline evaluation | 배포 전 회귀·버전 비교 |
+| online evaluation | 실제 트래픽의 품질·안전성 감시 |
+
+실패한 production trace를 dataset의 회귀 사례로 추가하면 `관측 → 재현 테스트 → 수정 → 재평가` 피드백 루프를 만들 수 있습니다.
+
+---
+
+## Step 11: 실습 — 데이터 전처리 Cast 연결
+
+### 11.1 목표
+
+- `data_preprocessor` Cast 추가
+- 입력 공백 정규화와 단어 수 계산
+- `chatbot`에서 서브그래프로 호출
+- 노드·그래프 테스트 작성
+- LangSmith trace에서 상위·하위 실행 확인
+
+### 11.2 Cast 생성
+
+```bash
+uv run act cast --cast-name "Data Preprocessor" --lang kr
+uv sync
+```
+
+### 11.3 전처리 State와 노드
+
+```python
+# casts/data_preprocessor/modules/state.py
+from __future__ import annotations
+
+from typing_extensions import TypedDict
+
+
+class InputState(TypedDict):
+    query: str
+
+
+class OutputState(TypedDict):
+    result: str
+    word_count: int
+
+
+class State(InputState, OutputState):
+    pass
+```
+
+```python
+# casts/data_preprocessor/modules/nodes.py
+from __future__ import annotations
+
+from casts.base_node import BaseNode
+from casts.data_preprocessor.modules.state import State
+
+
+class NormalizeTextNode(BaseNode):
+    """입력 문자열의 앞뒤 및 중복 공백을 정리합니다."""
+
+    def execute(self, state: State) -> dict[str, object]:
+        normalized = " ".join(state["query"].split())
         return {
-            "processed_query": result["cleaned_text"],
+            "result": normalized,
+            "word_count": len(normalized.split()),
+        }
+```
+
+생성된 `graph.py`의 `SampleNode`를 `NormalizeTextNode`로 교체한 뒤 테스트합니다.
+
+```python
+# tests/cast_tests/data_preprocessor_test.py
+from __future__ import annotations
+
+import pytest
+
+from casts.data_preprocessor.graph import data_preprocessor_graph
+
+
+@pytest.mark.parametrize(
+    ("query", "result", "word_count"),
+    [
+        ("  Hello    Act  ", "Hello Act", 2),
+        ("", "", 0),
+        ("한글   테스트", "한글 테스트", 2),
+    ],
+)
+def test_data_preprocessor(
+    query: str,
+    result: str,
+    word_count: int,
+) -> None:
+    graph = data_preprocessor_graph()
+
+    output = graph.invoke({"query": query})
+
+    assert output == {"result": result, "word_count": word_count}
+```
+
+### 11.4 `chatbot`에 서브그래프 연결
+
+`chatbot`의 내부 `State`에 `processed_query: str`, `word_count: int`를 추가하고 어댑터 노드를 만듭니다. 외부 입력·출력 계약에 필요하지 않다면 `InputState`와 `OutputState`에는 이 키를 노출하지 않습니다.
+
+```python
+# casts/chatbot/modules/nodes.py
+from __future__ import annotations
+
+from casts.base_node import BaseNode
+from casts.chatbot.modules.state import State
+from casts.data_preprocessor.graph import data_preprocessor_graph
+
+
+class PreprocessNode(BaseNode):
+    """전처리 Cast를 호출해 chatbot의 내부 State를 갱신합니다."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.subgraph = data_preprocessor_graph()
+
+    def execute(self, state: State) -> dict[str, object]:
+        result = self.subgraph.invoke({"query": state["query"]})
+        return {
+            "processed_query": result["result"],
             "word_count": result["word_count"],
         }
 ```
 
-#### 📄 D. 테스트 코드 작성
+`chatbot/graph.py`에서는 기존 처리 노드 앞에 어댑터 노드를 연결합니다.
 
 ```python
-# tests/test_preprocessor.py
-import pytest
-from casts.data_preprocessor.modules.subgraphs import (
-    preprocessing_graph,
-    clean_text,
-    count_words,
-)
+builder.add_node("PreprocessNode", PreprocessNode())
+builder.add_node("SampleNode", SampleNode())
+builder.add_edge(START, "PreprocessNode")
+builder.add_edge("PreprocessNode", "SampleNode")
+builder.add_edge("SampleNode", END)
+```
+
+어댑터 계약은 별도 단위 테스트로 확인합니다.
+
+```python
+# tests/node_tests/test_chatbot_preprocess.py
+from __future__ import annotations
+
 from casts.chatbot.modules.nodes import PreprocessNode
 
 
-# ── 노드 유닛 테스트 ──
-class TestCleanText:
-    def test_removes_extra_spaces(self):
-        state = {"raw_text": "  hello    world  ", "cleaned_text": "", "word_count": 0}
-        result = clean_text(state)
-        assert result["cleaned_text"] == "hello world"
+def test_chatbot_preprocess_adapter() -> None:
+    result = PreprocessNode()({"query": "  Hello    Act  "})
 
-    def test_handles_empty_string(self):
-        state = {"raw_text": "", "cleaned_text": "", "word_count": 0}
-        result = clean_text(state)
-        assert result["cleaned_text"] == ""
-
-
-class TestCountWords:
-    @pytest.mark.parametrize("text,expected_count", [
-        ("hello world", 2),
-        ("one", 1),
-        ("", 0),
-    ])
-    def test_counts_correctly(self, text, expected_count):
-        state = {"raw_text": "", "cleaned_text": text, "word_count": 0}
-        result = count_words(state)
-        assert result["word_count"] == expected_count
-
-
-# ── 서브 그래프 통합 테스트 ──
-class TestPreprocessingGraph:
-    def test_compiles(self):
-        assert preprocessing_graph is not None
-        assert hasattr(preprocessing_graph, "invoke")
-
-    def test_end_to_end(self):
-        result = preprocessing_graph.invoke({
-            "raw_text": "  Hello    World  ",
-            "cleaned_text": "",
-            "word_count": 0,
-        })
-        assert result["cleaned_text"] == "Hello World"
-        assert result["word_count"] == 2
-
-
-# ── 메인 Cast 연동 테스트 ──
-class TestPreprocessNode:
-    def test_returns_processed_query(self):
-        node = PreprocessNode()
-        state = {"query": "  test   input  "}
-        
-        result = node.execute(state)
-        
-        assert "processed_query" in result
-        assert "word_count" in result
-        assert result["word_count"] == 2
+    assert result == {
+        "processed_query": "Hello Act",
+        "word_count": 2,
+    }
 ```
 
-#### 📄 E. 테스트 실행
+### 11.5 검증
 
 ```bash
-# 전체 테스트 실행
-uv run pytest tests/test_preprocessor.py -v
-
-# 커버리지 포함
-uv run pytest tests/test_preprocessor.py --cov=casts --cov-report=term-missing
+uv run pytest tests/cast_tests/data_preprocessor_test.py -v
+uv run pytest --cov=casts --cov-branch --cov-report=term-missing
+uv lock --check
+uv run langgraph dev
 ```
 
-### 11.3 과제 제출 체크리스트
+LangSmith에서 trace를 열고 다음을 확인합니다.
 
-- [ ] `uv run act cast`로 새 Cast를 생성했는가?
-- [ ] `subgraphs.py`에 서브 그래프를 정의했는가?
-- [ ] 메인 Cast의 노드에서 서브 그래프를 호출하는가?
-- [ ] `test_nodes.py`에 노드 유닛 테스트를 작성했는가?
-- [ ] `test_graph.py`에 그래프 통합 테스트를 작성했는가?
-- [ ] LLM/도구에 대한 Mock을 사용했는가?
-- [ ] `.env`에 LangSmith 설정을 추가했는가?
-- [ ] `uv run pytest`로 테스트가 통과하는가?
+- [ ] `chatbot` 상위 실행과 전처리 하위 실행이 연결되는가?
+- [ ] 입력과 출력 State가 예상한 키만 노출하는가?
+- [ ] latency와 오류가 어느 run에서 발생했는지 식별 가능한가?
+- [ ] 민감정보가 trace에 남지 않는가?
+
+---
+
+## 운영 전 체크리스트
+
+- [ ] 모든 Cast가 `uv.lock` 하나로 정상 해석되는가?
+- [ ] 독립 패키징한 Cast 간 import만 workspace dependency로 선언되어 있는가?
+- [ ] 모든 그래프 진입점이 `langgraph.json`에 유효하게 등록되어 있는가?
+- [ ] 테스트마다 checkpointer와 thread가 격리되는가?
+- [ ] 외부 API·LLM·DB 호출이 단위 테스트에서 모킹되는가?
+- [ ] 서브그래프 persistence 모드를 의도적으로 선택했는가?
+- [ ] trace에 버전·환경 metadata가 포함되는가?
+- [ ] PII와 비밀정보가 로그와 trace에서 보호되는가?
+- [ ] 실패한 production trace를 회귀 테스트로 전환할 절차가 있는가?
 
 ---
 
 ## 🧠 복습 퀴즈
 
-### Q1. Cast 추가
-
-Act 프로젝트에 새로운 Cast를 추가하는 명령어는?
-
-<details>
-<summary>정답</summary>
-
-```bash
-uv run act cast
-```
-
-또는 이름을 직접 지정:
-```bash
-uv run act cast --cast-name "My Cast"
-```
-</details>
-
-### Q2. 서브 그래프 연결 방식
-
-부모 그래프와 서브 그래프의 State 스키마가 **다를 때** 어떤 방식으로 연결하나요?
-
-<details>
-<summary>정답</summary>
-
-**노드에서 호출 (Invoke from Node)** 방식을 사용합니다.
-
-노드의 `execute()` 메서드 안에서:
-1. 부모 State → 서브 그래프 입력으로 변환
-2. `self.subgraph.invoke(subgraph_input)` 호출
-3. 서브 그래프 출력 → 부모 State로 변환하여 반환
-</details>
-
-### Q3. Mocking이 필요한 이유
-
-테스트에서 LLM API를 Mocking하는 가장 중요한 이유 3가지는?
-
-<details>
-<summary>정답</summary>
-
-1. **비용 절감** — 실제 API 호출은 과금됨
-2. **결정론적 테스트** — 매번 동일한 응답을 보장
-3. **속도** — 네트워크 호출 없이 즉시 완료
-</details>
-
-### Q4. 커버리지 테스트
-
-다음 코드에서 테스트가 검증하는 것은 무엇인가요?
-
-```python
-def test_returns_only_updates():
-    node = MyNode()
-    result = node.execute({"input": "test", "existing": "data"})
-    
-    assert "existing" not in result
-    assert "processed" in result
-```
-
-<details>
-<summary>정답</summary>
-
-**노드가 State 업데이트만 반환하고, 기존 State를 그대로 복사하지 않는지** 검증합니다.
-
-노드의 `execute()`는 변경된 키만 반환해야 합니다. 입력에 있던 `existing` 키가 결과에 포함되면 안 됩니다.
-</details>
-
-### Q5. LangSmith 설정
-
-LangSmith 추적을 활성화하기 위해 `.env`에 반드시 설정해야 할 환경 변수 3개는?
-
-<details>
-<summary>정답</summary>
-
-```bash
-LANGSMITH_TRACING=true           # 추적 활성화
-LANGSMITH_PROJECT=my-project     # 프로젝트 이름
-LANGSMITH_API_KEY=lsv2_pt_...    # API 인증 키
-```
-</details>
+1. uv workspace의 Cast들이 공유하는 파일은?
+   **정답:** 루트 `uv.lock`
+2. 현재 한국어 scaffold 언어 코드는?
+   **정답:** `kr`
+3. 부모와 자식의 State 스키마가 다를 때 권장 연결 방식은?
+   **정답:** 어댑터 노드에서 입력을 변환해 서브그래프를 호출하고 출력을 부모 State 업데이트로 변환
+4. 서브그래프가 같은 thread에서 호출 간 상태를 유지하게 하는 설정은?
+   **정답:** `compile(checkpointer=True)`
+5. `checkpointer=False`의 제약은?
+   **정답:** interrupt, durable execution, checkpoint 기반 상태 조회를 사용할 수 없음
+6. Cast 그래프 테스트의 scaffold 기본 경로와 이름은?
+   **정답:** `tests/cast_tests/<cast_snake>_test.py`
+7. LangSmith에서 한 요청의 전체 실행과 그 내부 단계를 각각 무엇이라 부르는가?
+   **정답:** trace와 run
 
 ---
 
 ## 📚 참고 자료
 
-- [testing-cast 스킬](../.claude/skills/testing-cast/SKILL.md) — 테스트 자동 생성 스킬
-- [서브 그래프 패턴](../.claude/skills/developing-cast/resources/core/subgraph.md) — 그래프 재사용 패턴
-- [LangSmith 공식 문서](https://docs.smith.langchain.com/) — 관측 가능성 플랫폼
-- [pytest 공식 문서](https://docs.pytest.org/) — Python 테스트 프레임워크
-- [uv workspace 문서](https://docs.astral.sh/uv/concepts/workspaces/) — 모노레포 의존성 관리
-
----
+- [Act Operator README](../README_KR.md)
+- [LangGraph Subgraphs](https://docs.langchain.com/oss/python/langgraph/use-subgraphs)
+- [LangGraph Testing](https://docs.langchain.com/oss/python/langgraph/test)
+- [LangGraph Persistence](https://docs.langchain.com/oss/python/langgraph/persistence)
+- [LangGraph Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api)
+- [LangSmith Observability](https://docs.langchain.com/langsmith/observability)
+- [LangSmith Observability Concepts](https://docs.langchain.com/langsmith/observability-concepts)
+- [LangSmith Evaluation](https://docs.langchain.com/langsmith/evaluation)
+- [uv Workspaces](https://docs.astral.sh/uv/concepts/projects/workspaces/)
+- [uv Dependency Management](https://docs.astral.sh/uv/concepts/projects/dependencies/)
+- [pytest Documentation](https://docs.pytest.org/)
 
 ## 다음 주차 예고
 
-> **5주차: 외부 연동과 메모리**에서는 MCP 어댑터를 통해 외부 서비스(Slack, GitHub 등)와 연동하고, 벡터 스토어를 활용한 장기 메모리(Long-term Memory)를 구현하며, LangGraph의 Store를 이용한 크로스 스레드 메모리를 학습합니다.
+> **5주차: 외부 연동과 메모리**에서는 MCP와 외부 서비스를 연결하고, Store와 벡터 검색을 사용해 thread를 넘어 유지되는 장기 메모리를 구현합니다.
