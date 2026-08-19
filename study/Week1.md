@@ -111,9 +111,15 @@ uv sync
 ### 2.4 개발 환경 확인
 
 ```bash
-# LangGraph 개발 서버 구동 테스트
+# LangGraph 개발 서버 구동 테스트 (macOS / Linux)
 uv run langgraph dev
+
+# Windows (PowerShell) 환경: 한글 주석으로 인한 cp949 디코딩 오류 방지
+$env:PYTHONUTF8=1; uv run langgraph dev
 ```
+
+> [!TIP]
+> **Windows 환경 사용자 팁**: Windows 환경에서 `.env` 파일의 한글 주석 등으로 인해 `UnicodeDecodeError (cp949)`가 발생하는 경우 `$env:PYTHONUTF8=1`을 설정하여 실행하세요.
 
 `http://localhost:8000`에서 LangGraph Studio가 정상 구동되면 환경 준비가 완료된 것입니다.
 
