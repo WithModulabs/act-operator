@@ -1,6 +1,8 @@
 # 2주차: 핵심 로직 구현과 v1 패턴 적용 (Implementation & LangChain v1)
 
 > **목표**: LangChain v1의 새로운 패턴인 `create_agent`와 Act Operator의 표준 모듈 체계를 활용하여 비즈니스 로직을 구현합니다.
+>
+> **최종 확인일**: 2026-08-26 · 최신 공식 문서 기준
 
 ---
 

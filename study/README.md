@@ -95,7 +95,7 @@ flowchart TB
 ### 4주차: 엔지니어링 및 운영 최적화 (Engineering & Operations)
 > **목표**: 다중 Cast 관리, 테스트 코드 작성, 그리고 LangSmith를 통한 관측 가능성을 확보합니다.
 
-- 📄 **문서 자료**: [Week4 상세 가이드](Week4.md)
+- 📄 **문서 자료**: [Week4 상세 가이드](Week4.md) | [Week4 발표 슬라이드](Week4ppt.md)
 - **핵심 학습 내용**:
   - **다중 Cast 모노레포 관리**: `engineering-act` 스킬로 Cast 간 의존성(`pyproject.toml`) 조율 및 `uv run act cast` 추가
   - **테스트 자동화**: `testing-cast` 스킬로 pytest 기반 유닛 테스트 및 Mocking 코드 자동 생성

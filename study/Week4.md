@@ -2,7 +2,7 @@
 
 > **목표**: 여러 Cast를 하나의 uv workspace에서 관리하고, 서브그래프·pytest·LangSmith를 결합해 변경에 강하고 관측 가능한 Act를 만듭니다.
 >
-> **최종 확인일**: 2026-08-19 · 현재 Act Operator scaffold와 최신 공식 문서 기준
+> **최종 확인일**: 2026-08-26 · 현재 Act Operator scaffold와 최신 공식 문서 기준
 
 ## 📋 학습 체크리스트
 

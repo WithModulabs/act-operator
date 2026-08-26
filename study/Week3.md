@@ -2,7 +2,7 @@
 
 > **목표**: LangChain v1 미들웨어와 LangGraph 제어 흐름·지속성을 결합해, 사람이 통제할 수 있고 장애에 견디는 에이전트를 구현합니다.
 >
-> **최종 확인일**: 2026-08-19 · 최신 공식 문서 기준
+> **최종 확인일**: 2026-08-26 · 최신 공식 문서 기준
 
 ## 📋 학습 체크리스트
 
@@ -45,7 +45,19 @@ PowerShell에서는 `uv tree | Select-String "langchain|langgraph"`를 사용합
 
 `middleware=[A, B, C]`이면 `before_*`는 A→B→C, `after_*`는 C→B→A입니다. `wrap_*`는 A가 가장 바깥에서 B와 C를 감쌉니다.
 
-### 1.1 등록 방법
+### 1.1 가장 많이 사용되는 핵심 미들웨어 Top 5
+
+실무 및 프로덕션 환경에서 가장 널리 사용되는 미들웨어는 다음과 같습니다:
+
+| 순위 | 미들웨어 | 주요 역할 | 핵심 목적 |
+|:---:|---|---|---|
+| **1** | `HumanInTheLoopMiddleware` | 부작용 도구 실행 전 사람 승인/수정/거절 | 안전성·통제권 확보 |
+| **2** | `SummarizationMiddleware` | 토큰 초과 시 오래된 대화 자동 압축/요약 | 컨텍스트·비용 최적화 |
+| **3** | `PIIMiddleware` | 카드번호, 주민번호, 이메일, API 키 마스킹/차단 | 보안 및 규제 준수 |
+| **4** | `ToolCallLimitMiddleware` | 특정 도구의 실행 횟수 상한(run_limit) 제한 | 무한 루프·과금 방지 |
+| **5** | `ModelRetryMiddleware` / `ModelFallbackMiddleware` | 네트워크 재시도 및 백업 모델 전환 | 가용성·장애 복구 |
+
+### 1.2 등록 방법
 
 ```python
 from __future__ import annotations
@@ -64,6 +76,37 @@ def set_safe_agent():
 ```
 
 `create_agent()`의 반환값은 컴파일된 LangGraph입니다. 상위 `StateGraph`의 노드나 서브그래프로 넣어도 미들웨어가 유지됩니다.
+
+### 1.3 실무 표준 조합 패턴 (Standard Stack)
+
+실제 프로덕션 환경에서는 보통 아래와 같이 **보안 ➔ 승인 ➔ 호출 제한 ➔ 컨텍스트 요약** 순서로 미들웨어 체인을 구성합니다:
+
+```python
+from langchain.agents.middleware import (
+    HumanInTheLoopMiddleware,
+    PIIMiddleware,
+    SummarizationMiddleware,
+    ToolCallLimitMiddleware,
+)
+
+middlewares = [
+    # 1. 개인정보 보호 (입력 단계에서 마스킹)
+    PIIMiddleware("credit_card", strategy="mask", apply_to_input=True),
+    # 2. 부작용 도구 승인 절차 (HITL)
+    HumanInTheLoopMiddleware(
+        interrupt_on={"send_email": {"allowed_decisions": ["approve", "edit", "reject"]}},
+        description_prefix="이메일 발송 승인 대기 중",
+    ),
+    # 3. 도구 중복 호출 방지 (최대 1회)
+    ToolCallLimitMiddleware(tool_name="send_email", run_limit=1, exit_behavior="error"),
+    # 4. 컨텍스트 토큰 초과 시 자동 요약
+    SummarizationMiddleware(
+        model=get_summary_model(),
+        trigger=("tokens", 4_000),
+        keep=("messages", 10),
+    ),
+]
+```
 
 ---
 

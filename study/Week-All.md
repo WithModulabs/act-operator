@@ -1,7 +1,7 @@
 # Act Operator 통합 마스터 가이드 (Week 1~4 종합)
 
 > **문서 목적**: Act Operator 기반 LangGraph 1.0+ 모노레포 프로젝트의 설계, 구현, 미들웨어 제어, 서브그래프 연동, 테스트 및 관측성(LangSmith) 전 과정을 다루는 AI 에이전트 및 개발자용 통합 가이드입니다.  
-> **최신 확인일**: 2026-08-19 · LangChain `>=1.0.0`, LangGraph `>=1.0.0`, Python `>=3.11`, `uv` workspace 기준
+> **최신 확인일**: 2026-08-26 · LangChain `>=1.0.0`, LangGraph `>=1.0.0`, Python `>=3.11`, `uv` workspace 기준
 
 ---
 
@@ -471,6 +471,42 @@ smart_search_graph = SmartSearchGraph()
 - `before_*`: **A ➔ B ➔ C** (정방향)
 - `after_*`: **C ➔ B ➔ A** (역방향)
 - `wrap_*`: **A( B( C( target ) ) )** (A가 가장 바깥쪽을 감쌈)
+
+### 가장 많이 사용되는 핵심 미들웨어 Top 5
+
+| 순위 | 미들웨어 | 주요 역할 | 핵심 목적 |
+|:---:|---|---|---|
+| **1** | `HumanInTheLoopMiddleware` | 부작용 도구 실행 전 사람 승인/수정/거절 | 안전성·통제권 확보 |
+| **2** | `SummarizationMiddleware` | 토큰 초과 시 오래된 대화 자동 압축/요약 | 컨텍스트·비용 최적화 |
+| **3** | `PIIMiddleware` | 카드번호, 주민번호, 이메일, API 키 마스킹/차단 | 보안 및 규제 준수 |
+| **4** | `ToolCallLimitMiddleware` | 특정 도구의 실행 횟수 상한(run_limit) 제한 | 무한 루프·과금 방지 |
+| **5** | `ModelRetryMiddleware` / `ModelFallbackMiddleware` | 네트워크 재시도 및 백업 모델 전환 | 가용성·장애 복구 |
+
+### 실무 표준 조합 패턴 (Standard Stack)
+
+```python
+from langchain.agents.middleware import (
+    HumanInTheLoopMiddleware,
+    PIIMiddleware,
+    SummarizationMiddleware,
+    ToolCallLimitMiddleware,
+)
+
+# 보안 ➔ 승인 ➔ 호출 제한 ➔ 컨텍스트 요약 순서 권장
+standard_middlewares = [
+    PIIMiddleware("credit_card", strategy="mask", apply_to_input=True),
+    HumanInTheLoopMiddleware(
+        interrupt_on={"send_email": {"allowed_decisions": ["approve", "edit", "reject"]}},
+        description_prefix="이메일 발송 승인 대기 중",
+    ),
+    ToolCallLimitMiddleware(tool_name="send_email", run_limit=1, exit_behavior="error"),
+    SummarizationMiddleware(
+        model=get_summary_model(),
+        trigger=("tokens", 4_000),
+        keep=("messages", 10),
+    ),
+]
+```
 
 ## 3.2 Human-in-the-Loop (HITL) 승인 흐름
 
